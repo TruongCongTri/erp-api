@@ -14,6 +14,7 @@ import { AuditableEntity } from 'src/common/entities/auditable.entity';
 import { Role } from 'src/roles/entities/role.entity';
 import { Permission } from 'src/permissions/entities/permission.entity';
 import { User } from 'src/users/entities/users.entity';
+import { Department } from 'src/departments/entities/department.entity';
 
 @Entity('employee_profiles')
 export class EmployeeProfile extends AuditableEntity {
@@ -65,6 +66,13 @@ export class EmployeeProfile extends AuditableEntity {
   // ==========================================
   // PRE-ASSIGNED ACCESS (Awaiting Claim)
   // ==========================================
+  @Column({ name: 'designated_department_id', type: 'uuid', nullable: true })
+  designatedDepartmentId?: string | null;
+
+  @ManyToOne(() => Department, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'designated_department_id' })
+  designatedDepartment?: Department | null;
+
   @ManyToOne(() => Role, { nullable: true })
   @JoinColumn({ name: 'designated_role_id' })
   designatedRole?: Role; // 👈 HR assigns this during seeding

@@ -2,8 +2,10 @@
 import {
   convertAddressText,
   convertOldToNew,
+  newProvinces,
+  newWards,
 } from 'vietnam-administrative-address';
-import { newProvinces, newWards } from 'vietnam-administrative-address/data';
+// import { newProvinces, newWards } from 'vietnam-administrative-address/data';
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { CacheService } from 'src/common/cache/cache.service';
 import { Cacheable } from 'src/common/cache/decorators/cacheable.decorator';

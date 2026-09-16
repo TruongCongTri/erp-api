@@ -1,0 +1,303 @@
+{
+  "recruitmentRequests": [
+    {
+      "key": "REQ_BUDGET",
+      "departmentId": "0b268990-e2b7-43e6-a513-a43f63800488",
+      "rawRequestNote": "Cần tuyển gấp 01 Kỹ sư Trưởng Dự toán & Đấu thầu (Lead QS Engineer) cho Ban Dự toán. Yêu cầu tối thiểu 5-7 năm kinh nghiệm bóc tách khối lượng, lập dự toán chi tiết dự án công nghiệp/EPC quy mô từ 200 tỷ trở lên. Am hiểu định mức G8/Eta, hợp đồng FIDIC. Lương 25 - 35 triệu.",
+      "jobPost": {
+        "publicTitle": "Kỹ Sư Trưởng Dự Toán & Đấu Thầu (Lead QS / Estimator)",
+        "specialization": "Kinh tế Xây dựng / Quản lý Chi phí EPC",
+        "domainKnowledge": "Dự toán Xây dựng Dân dụng & Công nghiệp, Định mức Nhà nước, Đấu thầu EPC",
+        "level": "LEAD",
+        "jobType": "FULL_TIME",
+        "workingModel": "HYBRID",
+        "salaryMin": 25000000,
+        "salaryMax": 35000000,
+        "isSalaryNegotiable": false,
+        "jobDescription": "- Chủ trì công tác bóc tách khối lượng (BOQ), lập và thẩm tra dự toán chi phí chi tiết các gói thầu tổng thầu EPC.\n- Xây dựng đơn giá nội bộ, phân tích rủi ro biến động giá vật tư thép, bê tông, MEP cho các dự án nhà xưởng cao tầng.\n- Phối hợp với Ban Giám đốc và bộ phận Đấu thầu đàm phán hợp đồng thầu phụ, bảo vệ khối lượng trước Chủ đầu tư.\n- Điều phối, hướng dẫn và phân công công việc cho các chuyên viên dự toán trực thuộc.",
+        "requirements": "- Tốt nghiệp Đại học chuyên ngành Kinh tế Xây dựng, Xây dựng Dân dụng (ĐH Bách Khoa, ĐH Kiến Trúc, ĐH Xây Dựng).\n- Tối thiểu 5 năm kinh nghiệm làm QS/Dự toán, trong đó ít nhất 2 năm ở vị trí Team Lead hoặc tương đương.\n- Thành thạo các phần mềm dự toán G8, Eta, F1, AutoCAD và MS Excel nâng cao (VBA/Power Query).\n- Nắm chắc hệ thống quy chuẩn định mức Nhà nước và các mẫu hợp đồng EPC/FIDIC.",
+        "benefits": "- Mức lương: 25 - 35 triệu VNĐ/tháng, đánh giá tăng lương định kỳ 1 lần/năm.\n- Thưởng dự án theo tiến độ nghiệm thu, thưởng lương tháng 13 và các ngày lễ Tết lớn.\n- Bảo hiểm sức khỏe PVI Care 24/7, khám sức khỏe toàn diện hàng năm.\n- Trang bị laptop Core i7, hỗ trợ phụ cấp điện thoại 1.000.000 VNĐ/tháng.",
+        "extraBenefits": "Hỗ trợ bữa trưa tại trụ sở, chế độ công tác phí hiện trường tiêu chuẩn Lead.",
+        "workLocations": [
+          { "label": "Trụ sở chính", "address": "Khu Công nghệ cao, TP. Thủ Đức, TP.HCM" }
+        ],
+        "workingHoursStandard": "Thứ 2 – Thứ 6: 08:00 – 17:00",
+        "workingHoursDetail": "Nghỉ trưa 11h30 – 13h00; Thứ 7 làm theo ca luân phiên",
+        "minEducation": "BACHELOR",
+        "experienceYears": 5,
+        "gender": "ANY",
+        "ageMin": 28,
+        "ageMax": 42,
+        "mustHaveSkills": ["Bóc tách BOQ", "Lập dự toán", "Đấu thầu EPC", "Phần mềm G8/Eta", "AutoCAD"],
+        "niceToHaveSkills": ["Revit Takeoff", "Hợp đồng FIDIC", "Tiếng Anh chuyên ngành"],
+        "languages": ["Tiếng Việt", "Tiếng Anh"],
+        "headcount": 1,
+        "targetPlatforms": ["LINKEDIN", "TOPCV", "COMPANY_WEBSITE"]
+      }
+    },
+    {
+      "key": "REQ_SUPPLY",
+      "departmentId": "9a71aa1d-6783-4777-8410-d95c1518b8ec",
+      "rawRequestNote": "Tuyển 01 Chuyên viên Mua hàng & Chuỗi cung ứng Vật tư Dự án EPC. Kinh nghiệm 3-5 năm sourcing nhà cung cấp kết cấu thép, bê tông thương phẩm, thiết bị cơ điện. Kỹ năng đàm phán hợp đồng cung ứng và quản lý tiến độ giao hàng. Lương 18 - 25 triệu.",
+      "jobPost": {
+        "publicTitle": "Chuyên Viên Mua Hàng & Quản Lý Chuỗi Cung Ứng Dự Án EPC",
+        "specialization": "Cung ứng & Mua hàng Kỹ thuật (Procurement)",
+        "domainKnowledge": "Chuỗi cung ứng vật liệu xây dựng, Kết cấu thép, Thiết bị MEP công nghiệp",
+        "level": "SENIOR",
+        "jobType": "FULL_TIME",
+        "workingModel": "ON_SITE",
+        "salaryMin": 18000000,
+        "salaryMax": 25000000,
+        "isSalaryNegotiable": false,
+        "jobDescription": "- Khảo sát, tìm kiếm và phát triển mạng lưới nhà cung cấp vật tư chính (thép, xi măng, cáp điện, phụ kiện cơ điện).\n- Đàm phán đơn giá, điều khoản thanh toán, bảo lãnh hợp đồng và lịch giao hàng bám sát tiến độ thi công hiện trường.\n- Quản lý quá trình giao nhận vật tư tại công trường Đồng Nai/Bình Dương, giải quyết các phát sinh sai lệch quy cách, chất lượng.\n- Đánh giá định kỳ hiệu quả nhà cung ứng, kiểm soát chi phí mua sắm theo hạn mức ngân sách được duyệt.",
+        "requirements": "- Tốt nghiệp Đại học khối Kinh tế, Quản trị Chuỗi cung ứng, Logistics hoặc Kỹ thuật Xây dựng.\n- Tối thiểu 3 năm kinh nghiệm mua hàng cho các nhà thầu thi công xây dựng, tổng thầu EPC.\n- Am hiểu sâu về quy cách vật liệu xây dựng thô và thiết bị cơ điện công nghiệp.\n- Kỹ năng đàm phán thương lượng xuất sắc, trung thực, chịu được áp lực tiến độ gấp.",
+        "benefits": "- Thu nhập từ 18 - 25 triệu VNĐ/tháng + thưởng hiệu quả tiết kiệm chi phí mua sắm.\n- Thưởng các dịp Lễ, Tết, thưởng tháng 13 và chế độ bảo hiểm theo quy định pháp luật.\n- Môi trường làm việc thực tế, cơ hội cọ xát với các chuỗi cung ứng vật liệu hàng đầu.\n- Chế độ du lịch teambuilding hàng năm cùng toàn thể CBNV Chính Nam.",
+        "extraBenefits": "Xe đưa đón khi đi thẩm định nhà máy/nhà cung cấp tại các tỉnh lân cận.",
+        "workLocations": [
+          { "label": "Trụ sở chính", "address": "Khu Công nghệ cao, TP. Thủ Đức, TP.HCM" },
+          { "label": "Kho dự án Đồng Nai", "address": "KCN Nhơn Trạch, Đồng Nai" }
+        ],
+        "workingHoursStandard": "Thứ 2 – Thứ 6: 08:00 – 17:00; Thứ 7: 08:00 – 12:00",
+        "workingHoursDetail": "Nghỉ trưa 11h30 – 13h00",
+        "minEducation": "BACHELOR",
+        "experienceYears": 3,
+        "gender": "ANY",
+        "ageMin": 25,
+        "ageMax": 38,
+        "mustHaveSkills": ["Sourcing nhà cung cấp", "Đàm phán thương mại", "Hợp đồng mua bán", "Kiểm soát vật tư"],
+        "niceToHaveSkills": ["Tiếng Anh giao tiếp thương mại", "ERP SAP/Odoo"],
+        "languages": ["Tiếng Việt", "Tiếng Anh"],
+        "headcount": 1,
+        "targetPlatforms": ["LINKEDIN", "FACEBOOK", "TOPCV"]
+      }
+    },
+    {
+      "key": "REQ_MATERIAL",
+      "departmentId": "0050a978-71aa-4d4f-aaa2-515625eb822e",
+      "rawRequestNote": "Tuyển 02 Chuyên viên Điều phối Thiết bị Cơ giới & Vật lực Công trình. Giám sát điều động máy đào, cẩu tháp, máy phát điện, kiểm tra hồ sơ kiểm định an toàn kỹ thuật, tối ưu hóa năng suất ca máy. Lương 14 - 18 triệu.",
+      "jobPost": {
+        "publicTitle": "Chuyên Viên Điều Phối Thiết Bị Cơ Giới & Vật Lực Công Trình",
+        "specialization": "Quản lý Cơ giới & Vật lực Hiện trường",
+        "domainKnowledge": "Máy xây dựng, Cẩu tháp, Thiết bị thi công nền móng, An toàn thiết bị cơ giới",
+        "level": "MIDDLE",
+        "jobType": "FULL_TIME",
+        "workingModel": "ON_SITE",
+        "salaryMin": 14000000,
+        "salaryMax": 18000000,
+        "isSalaryNegotiable": false,
+        "jobDescription": "- Lập kế hoạch huy động, điều phối thiết bị thi công (cẩu tháp, máy đào, xe lu, giàn giáo) theo đề xuất của Ban Chỉ huy công trường.\n- Kiểm tra tình trạng kỹ thuật, hồ sơ kiểm định an toàn định kỳ của toàn bộ máy móc cơ giới trước khi đưa vào công trường.\n- Theo dõi định mức tiêu hao nhiên liệu, quản lý lịch bảo trì, sửa chữa định kỳ ngăn ngừa sự cố gián đoạn thi công.\n- Kiểm soát hóa đơn, phiếu giao ca máy thầu phụ, tổng hợp chi phí máy thi công hàng tháng.",
+        "requirements": "- Tốt nghiệp Cao đẳng trở lên chuyên ngành Máy xây dựng, Cơ khí Động lực, Kỹ thuật Cơ khí hoặc Xây dựng.\n- Tối thiểu 2 năm kinh nghiệm quản lý hoặc điều phối máy cơ giới tại các công trường xây dựng.\n- Nắm rõ quy trình kiểm định an toàn máy xây dựng và các định mức tiêu hao nhiên liệu cơ bản.\n- Sẵn sàng di chuyển kiểm tra hiện trường tại các cụm dự án phụ trách.",
+        "benefits": "- Mức lương: 14 - 18 triệu VNĐ/tháng + Phụ cấp hiện trường 2.000.000 VNĐ/tháng.\n- Đóng đầy đủ BHXH, BHYT, BHTN và cấp phát đầy đủ trang thiết bị bảo hộ lao động đạt chuẩn.\n- Thưởng tiến độ hoàn thành các mốc hạ cọc, đổ sàn bê tông của dự án.\n- Lương tháng 13 và thưởng đánh giá KPI định kỳ.",
+        "extraBenefits": "Cung cấp chỗ ở tại khu cư xá ban chỉ huy đối với công trình tỉnh.",
+        "workLocations": [
+          { "label": "Ban QLDA Đồng Nai", "address": "KCN Long Thành, Đồng Nai" },
+          { "label": "Kho thiết bị trung tâm", "address": "TP. Dĩ An, Bình Dương" }
+        ],
+        "workingHoursStandard": "Thứ 2 – Thứ 7: 07:30 – 17:00",
+        "workingHoursDetail": "Theo ca trực công trường; nghỉ trưa 11h30 – 13h00",
+        "minEducation": "COLLEGE",
+        "experienceYears": 2,
+        "gender": "MALE",
+        "ageMin": 24,
+        "ageMax": 36,
+        "mustHaveSkills": ["Quản lý máy cơ giới", "Kiểm định thiết bị", "Hồ sơ kỹ thuật máy", "Điều phối hiện trường"],
+        "niceToHaveSkills": ["Bằng lái xe B2", "Kỹ năng sửa chữa cơ điện cơ bản"],
+        "languages": ["Tiếng Việt"],
+        "headcount": 2,
+        "targetPlatforms": ["FACEBOOK", "TOPCV", "COMPANY_WEBSITE"]
+      }
+    },
+    {
+      "key": "REQ_HRM",
+      "departmentId": "09aaff85-0370-44d1-b2ec-1414c784b83d",
+      "rawRequestNote": "Tuyển 01 Chuyên viên Cao cấp Tuyển dụng Nhân sự Kỹ thuật (Technical TA Specialist). Chuyên tuyển các vị trí Chỉ huy trưởng, Kỹ sư MEP, BIM Coordinator, QS. Có mạng lưới talent pool ngành xây dựng công nghiệp tốt. Lương 16 - 22 triệu.",
+      "jobPost": {
+        "publicTitle": "Chuyên Viên Cao Cấp Tuyển Dụng Nhân Sự Kỹ Thuật (Senior Technical Recruiter)",
+        "specialization": "Thu hút Nhân tài Kỹ thuật (Technical Talent Acquisition)",
+        "domainKnowledge": "Tuyển dụng ngành Xây dựng / Tổng thầu EPC, Đánh giá năng lực Kỹ sư hiện trường",
+        "level": "SENIOR",
+        "jobType": "FULL_TIME",
+        "workingModel": "HYBRID",
+        "salaryMin": 16000000,
+        "salaryMax": 22000000,
+        "isSalaryNegotiable": false,
+        "jobDescription": "- Phối hợp với các Giám đốc Khối, Trưởng phòng Kỹ thuật xây dựng kế hoạch định biên và tuyển dụng nhân sự dự án.\n- Trực tiếp tìm kiếm, săn đầu người (headhunt) các vị trí then chốt: Chỉ huy trưởng, Kỹ sư MEP, Chủ trì Kết cấu, BIM Specialist.\n- Vận hành và khai thác các kênh tuyển dụng đa kênh: LinkedIn Recruiter, TopCV, Mạng lưới cộng đồng Kỹ sư Xây dựng.\n- Phỏng vấn sàng lọc bước đầu, tổ chức hội đồng thi tuyển/phỏng vấn chuyên môn và đàm phán thư mời nhận việc (Offer letter).",
+        "requirements": "- Tốt nghiệp Đại học các ngành Quản trị Nhân lực, Luật, Kinh tế hoặc khối Kỹ thuật chuyển hướng.\n- Tối thiểu 3 năm kinh nghiệm làm Talent Acquisition, ưu tiên ứng viên từng làm trong ngành Xây dựng, Bất động sản, Sản xuất công nghiệp.\n- Có network rộng rãi với cộng đồng kỹ sư xây dựng, am hiểu thuật ngữ chuyên ngành EPC/BIM/MEP.\n- Kỹ năng phỏng vấn theo mô hình hành vi (STAR), khả năng thuyết phục ứng viên xuất sắc.",
+        "benefits": "- Mức lương cứng: 16 - 22 triệu VNĐ/tháng + Thưởng chỉ tiêu tuyển dụng đúng hạn.\n- Chế độ làm việc linh hoạt (Hybrid 1 ngày làm việc từ xa/tuần).\n- Được cấp tài khoản LinkedIn Recruiter và ngân sách đăng tin tuyển dụng cao cấp.\n- Đầy đủ chế độ phúc lợi cao cấp: Khám sức khỏe PVI, du lịch 5 sao hàng năm.",
+        "extraBenefits": "Gói tài trợ các khóa đào tạo nâng cao nghiệp vụ quản trị nhân sự hiện đại.",
+        "workLocations": [
+          { "label": "Trụ sở chính", "address": "Khu Công nghệ cao, TP. Thủ Đức, TP.HCM" }
+        ],
+        "workingHoursStandard": "Thứ 2 – Thứ 6: 08:00 – 17:00",
+        "workingHoursDetail": "Nghỉ trưa 11h30 – 13h00",
+        "minEducation": "BACHELOR",
+        "experienceYears": 3,
+        "gender": "ANY",
+        "ageMin": 25,
+        "ageMax": 36,
+        "mustHaveSkills": ["Săn đầu người (Headhunting)", "Tuyển dụng Kỹ sư EPC", "Phỏng vấn STAR", "Sourcing LinkedIn"],
+        "niceToHaveSkills": ["Xây dựng thương hiệu tuyển dụng", "Thiết lập quy trình ATS"],
+        "languages": ["Tiếng Việt", "Tiếng Anh giao tiếp"],
+        "headcount": 1,
+        "targetPlatforms": ["LINKEDIN", "TOPCV", "COMPANY_WEBSITE"]
+      }
+    },
+    {
+      "key": "REQ_MEDIA",
+      "departmentId": "ac7cac11-ec03-4548-9031-9d3384a08992",
+      "rawRequestNote": "Tuyển 01 Chuyên viên Truyền thông Nội bộ & Thương hiệu Doanh nghiệp. Phụ trách sản xuất bản tin công trình, quản lý Fanpage/LinkedIn tuyển dụng, tổ chức các sự kiện văn hóa doanh nghiệp. Lương 13 - 17 triệu.",
+      "jobPost": {
+        "publicTitle": "Chuyên Viên Truyền Thông Nội Bộ & Thương Hiệu Tuyển Dụng",
+        "specialization": "Truyền thông Doanh nghiệp & Employer Branding",
+        "domainKnowledge": "Sáng tạo nội dung truyền thông ngành kỹ thuật, Xây dựng văn hóa doanh nghiệp, Social Media",
+        "level": "MIDDLE",
+        "jobType": "FULL_TIME",
+        "workingModel": "ON_SITE",
+        "salaryMin": 13000000,
+        "salaryMax": 17000000,
+        "isSalaryNegotiable": false,
+        "jobDescription": "- Xây dựng kế hoạch nội dung và quản trị các kênh truyền thông đối ngoại: Fanpage Facebook, Trang LinkedIn Doanh nghiệp, Website.\n- Trực tiếp tác nghiệp hiện trường các dự án trọng điểm, ghi hình phỏng vấn kỹ sư, viết bài chuyên mục 'Nhật ký công trình'.\n- Tổ chức các sự kiện văn hóa nội bộ: Lễ khởi công, cất nóc, teambuilding, các hội thao truyền thống của công ty.\n- Phối hợp với phòng Nhân sự xây dựng các ấn phẩm hình ảnh, video phục vụ chiến dịch tuyển dụng và định vị văn hóa Chính Nam.",
+        "requirements": "- Tốt nghiệp Đại học chuyên ngành Báo chí, Truyền thông, Quan hệ công chúng (PR), Marketing.\n- Tối thiểu 2 năm kinh nghiệm làm truyền thông nội bộ hoặc quản lý nội dung số.\n- Kỹ năng viết bài tốt, chụp ảnh và quay dựng video cơ bản (Adobe Premiere/Canva/CapCut).\n- Năng động, có khả năng kết nối tập thể và truyền năng lượng tích cực.",
+        "benefits": "- Mức lương: 13 - 17 triệu VNĐ/tháng + Thưởng truyền thông theo các chiến dịch lớn.\n- Được trang bị máy ảnh kỹ thuật số và các thiết bị quay dựng chuyên dụng.\n- Cơ hội trải nghiệm thực tế tại các đại công trường công nghiệp hiện đại.\n- Hưởng đầy đủ các chế độ phúc lợi, thưởng lễ tết, lương tháng 13.",
+        "extraBenefits": "Công tác phí và xe công vụ đưa đón phục vụ các chuyến tác nghiệp công trình.",
+        "workLocations": [
+          { "label": "Trụ sở chính", "address": "Khu Công nghệ cao, TP. Thủ Đức, TP.HCM" }
+        ],
+        "workingHoursStandard": "Thứ 2 – Thứ 6: 08:00 – 17:00",
+        "workingHoursDetail": "Nghỉ trưa 11h30 – 13h00; Thứ 7 làm theo lịch sự kiện",
+        "minEducation": "BACHELOR",
+        "experienceYears": 2,
+        "gender": "ANY",
+        "ageMin": 23,
+        "ageMax": 32,
+        "mustHaveSkills": ["Sáng tạo nội dung", "Quản lý Fanpage/LinkedIn", "Biên tập video", "Tổ chức sự kiện"],
+        "niceToHaveSkills": ["Chụp ảnh sự kiện", "Thiết kế đồ họa Photoshop/Illustrator"],
+        "languages": ["Tiếng Việt", "Tiếng Anh đọc hiểu"],
+        "headcount": 1,
+        "targetPlatforms": ["FACEBOOK", "LINKEDIN", "COMPANY_WEBSITE"]
+      }
+    }
+  ],
+  "mockCandidates": [
+    {
+      "fullName": "[MOCK] Nguyễn Hoàng Khôi",
+      "email": "mock.nguyenhoangkhoi@ats-candidate.vn",
+      "phoneNumber": "0912445889",
+      "location": "TP. Thủ Đức, TP.HCM",
+      "headline": "Senior QS & Cost Controller | 6 năm kinh nghiệm EPC",
+      "experienceYears": 6,
+      "skills": ["Bóc tách BOQ", "Lập dự toán", "Phần mềm G8/Eta", "AutoCAD", "Hợp đồng FIDIC", "Sourcing nhà cung cấp"],
+      "bio": "Kỹ sư Kinh tế Xây dựng tốt nghiệp ĐH Bách Khoa TP.HCM. Có 6 năm kinh nghiệm bóc tách khối lượng và quản lý đấu thầu cho các nhà xưởng công nghiệp quy mô lớn.",
+      "applications": [
+        {
+          "jobKey": "REQ_BUDGET",
+          "platformSource": "LINKEDIN",
+          "cvUrl": "https://storage.chinhnambkd.vn/ats/cv/mock_nguyen_hoang_khoi_qs.pdf",
+          "aiScore": 92,
+          "aiTier": "HIGH",
+          "aiReasoning": "Hồ sơ đáp ứng vượt trội: 6 năm kinh nghiệm chuyên sâu bóc tách BOQ và lập dự toán, tốt nghiệp đúng chuyên ngành ĐH Bách Khoa, thành thạo G8 và am hiểu hợp đồng FIDIC. Phù hợp 95% tiêu chuẩn Kỹ sư Trưởng Dự toán.",
+          "promotedPhase": "INTERVIEWING"
+        },
+        {
+          "jobKey": "REQ_SUPPLY",
+          "platformSource": "COMPANY_WEBSITE",
+          "cvUrl": "https://storage.chinhnambkd.vn/ats/cv/mock_nguyen_hoang_khoi_supply.pdf",
+          "aiScore": 76,
+          "aiTier": "MEDIUM",
+          "aiReasoning": "Ứng viên có kiến thức tốt về đơn giá vật tư và định mức, tuy nhiên kinh nghiệm trực tiếp về đàm phán hợp đồng cung ứng và quản lý logistics bãi tập kết vật tư chỉ ở mức hỗ trợ.",
+          "promotedPhase": "SAVED_POOL"
+        }
+      ]
+    },
+    {
+      "fullName": "[MOCK] Trần Minh Tuấn",
+      "email": "mock.tranminhtuan@ats-candidate.vn",
+      "phoneNumber": "0988776512",
+      "location": "TP. Biên Hòa, Đồng Nai",
+      "headline": "Kỹ sư Cơ khí & Điều phối Thiết bị Công trình",
+      "experienceYears": 3,
+      "skills": ["Quản lý máy cơ giới", "Kiểm định thiết bị", "Hồ sơ kỹ thuật máy", "Điều phối hiện trường", "AutoCAD"],
+      "bio": "Tốt nghiệp ĐH Sư phạm Kỹ thuật ngành Cơ khí Động lực. 3 năm phụ trách điều động cẩu tháp và thiết bị thi công nền móng tại các dự án KCN Đồng Nai.",
+      "applications": [
+        {
+          "jobKey": "REQ_MATERIAL",
+          "platformSource": "TOPCV",
+          "cvUrl": "https://storage.chinhnambkd.vn/ats/cv/mock_tran_minh_tuan_cơ_giới.pdf",
+          "aiScore": 88,
+          "aiTier": "HIGH",
+          "aiReasoning": "Rất phù hợp với vai trò Điều phối Cơ giới: Có kinh nghiệm kiểm tra an toàn thiết bị cẩu tháp, định mức nhiên liệu, địa bàn cư trú tại Đồng Nai rất thuận tiện cho dự án trọng điểm.",
+          "promotedPhase": "INTERVIEWING"
+        },
+        {
+          "jobKey": "REQ_SUPPLY",
+          "platformSource": "FACEBOOK",
+          "cvUrl": "https://storage.chinhnambkd.vn/ats/cv/mock_tran_minh_tuan_supply.pdf",
+          "aiScore": 62,
+          "aiTier": "MEDIUM",
+          "aiReasoning": "Hiểu biết về thông số máy móc và vật tư sắt thép nhưng chưa có kinh nghiệm đàm phán thương mại chuyên nghiệp hay hợp đồng mua bán EPC quy mô lớn.",
+          "promotedPhase": "SAVED_POOL"
+        }
+      ]
+    },
+    {
+      "fullName": "[MOCK] Lê Thị Thanh Trúc",
+      "email": "mock.lethithanhtruc@ats-candidate.vn",
+      "phoneNumber": "0934112998",
+      "location": "Quận 1, TP.HCM",
+      "headline": "Senior Technical Recruiter & Employer Branding Specialist",
+      "experienceYears": 4,
+      "skills": ["Săn đầu người (Headhunting)", "Tuyển dụng Kỹ sư EPC", "Phỏng vấn STAR", "Sáng tạo nội dung", "Quản lý Fanpage/LinkedIn"],
+      "bio": "4 năm chuyên sâu tuyển dụng nhân sự kỹ thuật cao cho các tập đoàn xây dựng và tổng thầu EPC. Kiêm nhiệm các hoạt động xây dựng thương hiệu nhà tuyển dụng trên LinkedIn/Facebook.",
+      "applications": [
+        {
+          "jobKey": "REQ_HRM",
+          "platformSource": "LINKEDIN",
+          "cvUrl": "https://storage.chinhnambkd.vn/ats/cv/mock_le_thi_thanh_truc_hr.pdf",
+          "aiScore": 90,
+          "aiTier": "HIGH",
+          "aiReasoning": "Hồ sơ xuất sắc cho vị trí Senior Technical Recruiter: Network rộng với cộng đồng Kỹ sư EPC, thành thạo phỏng vấn STAR và sourcing trên LinkedIn Recruiter.",
+          "promotedPhase": "SHORTLISTED"
+        },
+        {
+          "jobKey": "REQ_MEDIA",
+          "platformSource": "REFERRAL",
+          "cvUrl": "https://storage.chinhnambkd.vn/ats/cv/mock_le_thi_thanh_truc_media.pdf",
+          "aiScore": 72,
+          "aiTier": "MEDIUM",
+          "aiReasoning": "Có thế mạnh về Employer Branding và truyền thông tuyển dụng nhưng chưa chuyên sâu về quay dựng video công trình và tổ chức sự kiện khởi công/cất nóc chuyên nghiệp.",
+          "promotedPhase": "SAVED_POOL"
+        }
+      ]
+    },
+    {
+      "fullName": "[MOCK] Đặng Quốc Bảo",
+      "email": "mock.dangquocbao@ats-candidate.vn",
+      "phoneNumber": "0903889110",
+      "location": "Quận Bình Thạnh, TP.HCM",
+      "headline": "Junior Marketing & Multimedia Content Creator",
+      "experienceYears": 1,
+      "skills": ["Sáng tạo nội dung", "Quản lý Fanpage/LinkedIn", "Chụp ảnh cơ bản"],
+      "bio": "Cử nhân Báo chí & Truyền thông mới tốt nghiệp 1 năm. Có kinh nghiệm viết bài cho các fanpage sinh viên và quản lý mạng xã hội cơ bản.",
+      "applications": [
+        {
+          "jobKey": "REQ_MEDIA",
+          "platformSource": "FACEBOOK",
+          "cvUrl": "https://storage.chinhnambkd.vn/ats/cv/mock_dang_quoc_bao_media.pdf",
+          "aiScore": 68,
+          "aiTier": "MEDIUM",
+          "aiReasoning": "Kỹ năng viết tốt, nhiệt huyết nhưng còn non kinh nghiệm (1 năm so với yêu cầu 2 năm), chưa có trải nghiệm tác nghiệp thực tế tại các dự án xây dựng công nghiệp.",
+          "promotedPhase": "SAVED_POOL"
+        },
+        {
+          "jobKey": "REQ_BUDGET",
+          "platformSource": "TOPCV",
+          "cvUrl": "https://storage.chinhnambkd.vn/ats/cv/mock_dang_quoc_bao_qs.pdf",
+          "aiScore": 35,
+          "aiTier": "LOW",
+          "aiReasoning": "Hồ sơ hoàn toàn không phù hợp: Bằng cấp Báo chí, không có chuyên môn đọc bản vẽ, không biết sử dụng phần mềm dự toán G8/AutoCAD. Đề xuất từ chối ngay ở vòng sơ loại.",
+          "promotedPhase": "SCREENING_REJECTED"
+        }
+      ]
+    }
+  ]
+}

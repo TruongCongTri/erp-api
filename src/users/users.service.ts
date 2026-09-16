@@ -35,6 +35,7 @@ import { type ActiveUserData } from 'src/common/decorators/current-user.decorato
 import { User } from './entities/users.entity';
 import { EmployeeProfile } from 'src/employee-profiles/entities/employee-profile.entity';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Department } from 'src/departments/entities/department.entity';
 
 export type UserListResponse = Omit<User, 'bonusPermissions'> & {
   bonusPermsCount: number;
@@ -51,6 +52,9 @@ export class UsersService {
     private readonly permissionRepository: Repository<Permission>,
     @InjectRepository(EmployeeProfile)
     private readonly profileRepository: Repository<EmployeeProfile>,
+
+    @InjectRepository(Department)
+    private readonly departmentRepository: Repository<Department>,
     private readonly eventEmitter: EventEmitter2,
     readonly cacheService: CacheService,
   ) {}
@@ -641,6 +645,7 @@ export class UsersService {
     roleId?: string,
     bonusPermissionIds: string[] = [],
     adminUser?: ActiveUserData,
+    departmentId?: string,
   ) {
     const user = await this.userRepository.findOne({
       where: { id: targetUserId },
@@ -649,6 +654,7 @@ export class UsersService {
         profile: {
           designatedRole: true,
           designatedBonusPermissions: true,
+          designatedDepartment: true,
         },
       },
     });
@@ -705,6 +711,28 @@ export class UsersService {
       user.bonusPermissions = [];
     }
 
+    // 3. Hydrate the Department & Organization
+    if (user.profile.designatedDepartment) {
+      // Tự động kế thừa phòng ban và tổ chức từ hồ sơ đã được HR seed/chỉ định
+      user.department = user.profile.designatedDepartment;
+      user.departmentId = user.profile.designatedDepartment.id;
+      user.organizationId =
+        user.profile.designatedDepartment.organizationId ?? null;
+    } else if (departmentId) {
+      // Fallback: Admin chọn phòng ban trực tiếp trên modal phê duyệt
+      const dept = await this.departmentRepository.findOne({
+        where: { id: departmentId, isActive: true },
+      });
+      if (!dept) {
+        throw new BadRequestException(
+          'Phòng ban được chọn không tồn tại hoặc đã bị vô hiệu hóa.',
+        );
+      }
+      user.department = dept;
+      user.departmentId = dept.id;
+      user.organizationId = dept.organizationId ?? null;
+    }
+
     // ==========================================
     // SAVE & AUDIT
     // ==========================================
@@ -727,6 +755,9 @@ export class UsersService {
     this.eventEmitter.emit('profile.claim.approved', {
       targetUserId: savedUser.id,
       employeeCode: claimedCode,
+      departmentId: savedUser.departmentId,
+      organizationId: savedUser.organizationId,
+      roleSlug: savedUser.role?.slug,
     });
 
     return savedUser;

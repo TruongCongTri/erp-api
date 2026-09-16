@@ -8,14 +8,15 @@ import {
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
 import { PERMISSIONS_KEY } from '../decorators/require-permissions.decorator';
+import { ANY_PERMISSIONS_KEY } from '../decorators/require-any-permissions.decorator';
 
 // 1. Define a strict type for the Request object to satisfy ESLint
 interface RequestWithUser extends Request {
   user?: {
-    role?: {
-      slug: string;
-    };
+    id: string;
+    role?: { slug: string };
     permissions?: string[];
+    departmentId?: string;
   };
 }
 
@@ -24,24 +25,27 @@ export class PermissionsGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const requiredPermissions = this.reflector.getAllAndOverride<string[]>(
+    const requiredAll = this.reflector.getAllAndOverride<string[]>(
       PERMISSIONS_KEY,
       [context.getHandler(), context.getClass()],
     );
 
+    const requiredAny = this.reflector.getAllAndOverride<string[]>(
+      ANY_PERMISSIONS_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+
     // If no permissions are required, allow access
-    if (!requiredPermissions) {
-      return true;
-    }
+    if (!requiredAll && !requiredAny) return true;
 
     // 2. Cast the request to our strictly-typed interface
     const request = context.switchToHttp().getRequest<RequestWithUser>();
     const user = request.user;
 
-    // 🐛 DEBUG LOGS
+    // DEBUG LOGS
     console.log('\n--- [PermissionsGuard] DEBUG ---');
     console.log('User Object:', JSON.stringify(user, null, 2));
-    console.log('Required Perms:', requiredPermissions);
+    console.log('Required Perms:', requiredAll);
     console.log('--------------------------------\n');
 
     if (!user || !user.permissions) {
@@ -62,17 +66,24 @@ export class PermissionsGuard implements CanActivate {
       return true;
     }
 
-    // 4. Check if user has ALL required permissions for this route
-    const hasPermission = requiredPermissions.every((reqPerm) =>
-      // We use the non-null assertion (!) because we already verified user.permissions exists
-      user.permissions!.includes(reqPerm),
-    );
+    // 4. Check RequirePermissions
+    // if user has ALL required permissions for this route
+    if (requiredAll) {
+      const hasAll = requiredAll.every((p) => user.permissions!.includes(p));
+      if (!hasAll)
+        throw new ForbiddenException(
+          `Missing required permissions: ${requiredAll.join(', ')}`,
+        );
+    }
 
-    if (!hasPermission) {
-      console.log('❌ Access Denied: Missing permissions');
-      throw new ForbiddenException(
-        `Missing required permissions: ${requiredPermissions.join(', ')}`,
-      );
+    // 5. Check RequireAnyPermissions
+    // if user has ONE of required permissions for this route
+    if (requiredAny) {
+      const hasAny = requiredAny.some((p) => user.permissions!.includes(p));
+      if (!hasAny)
+        throw new ForbiddenException(
+          `Requires one of: ${requiredAny.join(', ')}`,
+        );
     }
 
     return true;

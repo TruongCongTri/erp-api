@@ -7,13 +7,20 @@ import { UsersService } from './users.service';
 import { Role } from '../roles/entities/role.entity';
 import { Permission } from '../permissions/entities/permission.entity';
 import { EmployeeProfile } from 'src/employee-profiles/entities/employee-profile.entity';
+import { Department } from 'src/departments/entities/department.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Role, Permission, EmployeeProfile]),
+    TypeOrmModule.forFeature([
+      User,
+      Role,
+      Permission,
+      EmployeeProfile,
+      Department,
+    ]),
   ],
   controllers: [UsersController],
   providers: [UsersService],
-  exports: [UsersService],
+  exports: [UsersService, TypeOrmModule],
 })
 export class UsersModule {}

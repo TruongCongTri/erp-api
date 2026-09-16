@@ -1,4 +1,4 @@
-import { IsInt, Min, Max, IsOptional } from 'class-validator';
+import { IsInt, Min, Max, IsOptional, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
 
 // 1. Request DTO: Dùng để validate Query Params gửi lên
@@ -15,6 +15,10 @@ export class PaginationQueryDto {
   @Min(1)
   @Max(100)
   limit: number = 10; // Default to 10
+
+  @IsOptional()
+  @IsString()
+  cursor?: string;
 }
 
 // 2. Response DTO: Dùng để định nghĩa cấu trúc dữ liệu trả về cho client

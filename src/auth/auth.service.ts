@@ -183,7 +183,8 @@ export class AuthService {
 
         // ENTERPRISE FIX: Generate an impossible hash so local login completely fails
         // until the user explicitly requests a "Forgot Password" reset.
-        passwordHash: await bcrypt.hash(crypto.randomUUID(), 10),
+        // passwordHash: await bcrypt.hash(crypto.randomUUID(), 10),
+        passwordHash: null as unknown as string,
 
         status: UserStatus.ACTIVE, // UX WIN: Google already verified the email!
         role: guestRole, // Assign baseline dashboard permissions
@@ -244,6 +245,14 @@ export class AuthService {
   async getMe(userId: string, _bypassCache?: boolean) {
     const user = await this.userRepository.findOne({
       where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        avatarUrl: true,
+        status: true,
+        passwordHash: true,
+      },
       relations: {
         profile: true,
         bonusPermissions: true,
@@ -268,10 +277,14 @@ export class AuthService {
       new Set([...rolePerms, ...bonusPerms]),
     );
 
+    const hasPassword = Boolean(user.passwordHash);
+
     const plainUser = instanceToPlain(user);
+    delete plainUser.passwordHash; // Không trả hash ra client
 
     return {
       ...plainUser,
+      hasPassword, // Flag quan trọng để Frontend render UI
       permissions: uniquePermissions,
     };
   }
@@ -354,10 +367,13 @@ export class AuthService {
     }
   }
 
-  async changePassword(userId: string, dto: ChangePasswordDto): Promise<void> {
+  async changePassword(
+    userId: string,
+    dto: ChangePasswordDto,
+  ): Promise<{ isFirstTimeSetup: boolean }> {
     const user = await this.userRepository.findOne({
       where: { id: userId },
-      select: { id: true, passwordHash: true },
+      select: { id: true, passwordHash: true, email: true },
     });
 
     if (!user)
@@ -365,16 +381,30 @@ export class AuthService {
         MESSAGES.ERROR.NOT_FOUND(RESOURCES.USER.BASE),
       );
 
+    // TRƯỜNG HỢP 1: Tài khoản đã có mật khẩu trước đó -> Bắt buộc kiểm tra oldPassword
     if (user.passwordHash) {
+      if (!dto.oldPassword) {
+        throw new BadRequestException(
+          'Vui lòng cung cấp mật khẩu cũ để đổi mật khẩu.',
+        );
+      }
+
       const isMatch = await bcrypt.compare(dto.oldPassword, user.passwordHash);
-      if (!isMatch)
+      if (!isMatch) {
         throw new BadRequestException(
           MESSAGES.ERROR.AUTH.INCORRECT_OLD_PASSWORD,
         );
+      }
     }
-
+    // TRƯỜNG HỢP 2: Tài khoản Google tạo lần đầu (passwordHash is null/empty)
+    // -> Cho phép trực tiếp thiết lập password mới (Setup Password)
+    const isFirstTimeSetup = !user.passwordHash;
     user.passwordHash = await bcrypt.hash(dto.newPassword, 10);
     await this.userRepository.save(user);
+
+    // Xóa cache user để đồng bộ trạng thái
+    await this.cacheService.del(`user:${userId}`);
+    return { isFirstTimeSetup };
   }
 
   // =====================================
@@ -441,6 +471,7 @@ export class AuthService {
       );
     }
   }
+
   @CacheClear({
     key: (userId: unknown) => [
       `user:${userId as string}`,
@@ -590,7 +621,7 @@ export class AuthService {
       // 4. Fetch the user WITH their role so the payload populates correctly
       const user = await this.userRepository.findOne({
         where: { id: payload.sub },
-        relations: { role: true },
+        relations: { role: { permissions: true } },
       });
 
       if (!user)

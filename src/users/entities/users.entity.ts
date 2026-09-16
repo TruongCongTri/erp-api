@@ -16,6 +16,7 @@ import { UserStatus } from 'src/users/enums/user-status.enum';
 import { AuditableEntity } from 'src/common/entities/auditable.entity';
 import { EmployeeProfile } from 'src/employee-profiles/entities/employee-profile.entity';
 import { UserAvatar } from 'src/user-avatars/entities/user-avatar.entity';
+import { Department } from 'src/departments/entities/department.entity';
 
 @Entity('users')
 export class User extends AuditableEntity {
@@ -37,8 +38,21 @@ export class User extends AuditableEntity {
   @Column({ type: 'enum', enum: UserStatus, default: UserStatus.ACTIVE })
   status!: UserStatus;
 
+  // ─── Tổ chức & Phòng ban vận hành trực tiếp ───
+  @Column({ name: 'organization_id', type: 'uuid', nullable: true })
+  organizationId?: string | null;
+
+  @Column({ name: 'department_id', type: 'uuid', nullable: true })
+  departmentId?: string | null;
+
+  @ManyToOne(() => Department, (dept) => dept.users, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'department_id' })
+  department?: Department | null;
+
   // --- Active Session Access ---
-  // (This is what actually controls JWTs and API access)
   @ManyToOne(() => Role, (role: Role) => role.users, { nullable: true })
   @JoinColumn({ name: 'role_id' })
   role?: Role;

@@ -21,7 +21,7 @@ export const typeOrmConfigFactory = (
     database: configService.get<string>('DATABASE_NAME', 'chinh_nam_erp_db'),
     entities: [__dirname + '/../**/*.entity{.ts,.js}'],
     synchronize: false, // STRICTLY FALSE IN ENTERPRISE
-    migrations: [__dirname + '/../migrations/*{.ts,.js}'],
+    migrations: [__dirname + '/../src/migrations/*{.ts,.js}'],
     migrationsTableName: 'migrations_history',
     logging: configService.get<string>('NODE_ENV') === 'development',
 

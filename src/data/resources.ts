@@ -39,7 +39,7 @@ export const resourcesData = [
   },
 
   // =====================================
-  // 2. CORPORATE OPERATIONS
+  // 2. CORPORATE OPERATIONS & HR
   // =====================================
   {
     slug: 'hr',
@@ -80,7 +80,29 @@ export const resourcesData = [
   },
 
   // =====================================
-  // 3. CORE EPC PIPELINE
+  // 3. APPLICANT TRACKING SYSTEM (ATS)
+  // =====================================
+  {
+    slug: 'ats_requisition',
+    name: 'ATS: Recruitment Requisition',
+    description:
+      'Department headcount requests, draft intake notes, and approval workflows (ats:requisitions:*)',
+  },
+  {
+    slug: 'ats_job_post',
+    name: 'ATS: Job Post & Publishing',
+    description:
+      'AI JD authoring (Gemini), template cloning, multi-channel job dispatch, and scheduling (ats:jobs:*)',
+  },
+  {
+    slug: 'ats_candidate',
+    name: 'ATS: Candidate & Pipeline',
+    description:
+      'Omnichannel applicant ingestion, AI 3-tier screening evaluation, Kanban pipeline, and candidate pools (ats:candidates:*)',
+  },
+
+  // =====================================
+  // 4. CORE EPC PIPELINE
   // =====================================
   {
     slug: 'project',
@@ -130,5 +152,13 @@ export const resourcesData = [
     name: 'News Feed / Dashboard',
     description:
       'General company announcements, internal news, and basic dashboard viewing',
+  },
+
+  // 8. HIGHTLY SENSITIVE ACCESS
+  {
+    slug: 'audit_log',
+    name: 'System Audit Log',
+    description:
+      'Tracks, stores, and audits all user activities, data mutations, status transitions, and security events across all ERP departments.',
   },
 ];

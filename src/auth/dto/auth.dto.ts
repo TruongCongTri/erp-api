@@ -77,10 +77,11 @@ export class ResetPasswordDto {
 export class ChangePasswordDto {
   @IsString()
   @IsNotEmpty()
-  oldPassword!: string;
+  oldPassword?: string;
 
   @IsString()
-  @MinLength(6)
+  @IsNotEmpty({ message: 'Mật khẩu mới không được để trống' })
+  @MinLength(6, { message: 'Mật khẩu mới phải có tối thiểu 6 ký tự' })
   newPassword!: string;
 }
 

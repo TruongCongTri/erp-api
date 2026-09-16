@@ -8,6 +8,23 @@ export const employeeRoster = [
     department: 'Ban Giám đốc',
   },
   {
+    employeeCode: 'A00-001',
+    fullName: 'Super HR Name',
+    jobTitle: 'Super HR Job Title',
+    roleSlug: 'DIR_HR_ADMIN',
+    email: 'superhr@chinhnam.vn',
+    department: 'Hành Chính Nhân Sự',
+  },
+  {
+    employeeCode: 'A00-002',
+    fullName: 'Staff HR Name',
+    jobTitle: 'Staff HR Job Title',
+    roleSlug: 'STAFF_HR',
+    email: 'staffhr@chinhnam.vn',
+    department: 'Hành Chính Nhân Sự',
+  },
+  //
+  {
     employeeCode: 'A12-001',
     fullName: 'Trần Quang Huấn',
     jobTitle: 'Tổng giám đốc',

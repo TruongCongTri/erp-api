@@ -1,4 +1,24 @@
 declare module 'vietnam-administrative-address' {
+  export interface AdministrativeUnitData {
+    name: string;
+    slug: string;
+    type: string;
+    name_with_type: string;
+    code: string;
+    [key: string]: unknown;
+  }
+
+  export interface SubUnitData extends AdministrativeUnitData {
+    path: string;
+    path_with_type: string;
+    parent_code: string;
+  }
+
+  // Export the datasets directly
+  export const newProvinces: Record<string, AdministrativeUnitData>;
+  export const newWards: Record<string, SubUnitData>;
+  export const newDistricts: Record<string, SubUnitData>;
+
   export interface ConvertAddressTextResult {
     text: string;
     input_type: 'old' | 'new';

@@ -1,0 +1,666 @@
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, SelectQueryBuilder } from 'typeorm';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+
+import { JobApplication } from './entities/job-application.entity';
+import { JobPost } from './entities/job-post.entity';
+import {
+  UpdateApplicationPhaseDto,
+  QueryJobApplicationsDto,
+} from './dto/candidate-submission.dto';
+import { ApplicationPhaseChangedEvent } from './candidate-application.events';
+import { PaginationMetaDto } from 'src/common/dto/pagination.dto';
+import type { ActiveUserData } from 'src/common/decorators/current-user.decorator';
+import {
+  AiScreeningTier,
+  ApplicationPhase,
+  JobPostStatus,
+} from './enums/ats.enum';
+// import { AiScoreResult } from './cv-screening.types';
+import {
+  CandidatePromotedFromPoolEvent,
+  // CandidateScreeningCompletedEvent,
+  CandidateShortlistedEvent,
+} from './cv-screening.events';
+import { ApplicationSubmission } from './entities/application-submission.entity';
+import {
+  hasPermission,
+  getUserDepartmentId,
+  ExtendedUser,
+} from '../common/utils/ats-rbac.util';
+import { S3StorageService } from './s3-storage.service';
+import { CandidateScreeningRejectedEvent } from './ats-domain.events';
+
+export interface CvScoreResult {
+  aiScore: number;
+  aiTier: AiScreeningTier;
+  aiReasoning: string;
+}
+
+@Injectable()
+export class JobApplicationsService {
+  private readonly logger = new Logger(JobApplicationsService.name);
+
+  constructor(
+    @InjectRepository(JobApplication)
+    private readonly applicationRepo: Repository<JobApplication>,
+    @InjectRepository(JobPost)
+    private readonly jobPostRepo: Repository<JobPost>,
+    private readonly eventEmitter: EventEmitter2,
+    @InjectRepository(ApplicationSubmission)
+    private readonly submissionRepo: Repository<ApplicationSubmission>,
+    private readonly s3StorageService: S3StorageService,
+  ) {}
+
+  // ========================================================
+  // 1. DEDUPLICATED FIND OR CREATE APPLICATION RECORD
+  // ========================================================
+  async findOrCreateApplication(
+    candidateId: string,
+    jobPostId: string,
+  ): Promise<{ application: JobApplication; isNew: boolean }> {
+    // 1. Kiểm tra tính hợp lệ và thời hạn nhận hồ sơ của Job Post
+    const jobPost = await this.jobPostRepo.findOneBy({ id: jobPostId });
+    if (!jobPost) {
+      throw new NotFoundException(`Tin tuyển dụng ${jobPostId} không tồn tại.`);
+    }
+
+    if (jobPost.status !== JobPostStatus.PUBLISHED) {
+      throw new BadRequestException(
+        'Tin tuyển dụng hiện không còn tiếp nhận hồ sơ.',
+      );
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const deadline = new Date(jobPost.applicationDeadline)
+      .toISOString()
+      .split('T')[0];
+    if (deadline < today) {
+      throw new BadRequestException('Tin tuyển dụng này đã quá hạn nộp hồ sơ.');
+    }
+
+    // 2. Tra cứu ứng tuyển hiện hữu (1 Candidate x 1 JobPost composite unique)
+    let application = await this.applicationRepo.findOne({
+      where: { candidateId, jobPostId },
+      relations: {
+        candidate: true,
+        jobPost: true,
+        submissions: true,
+      },
+    });
+
+    if (application) {
+      // Đã nộp trước đó -> Không reset status tuyển dụng đang phỏng vấn
+      return { application, isNew: false };
+    }
+
+    // 3. Khởi tạo mới hồ sơ ứng tuyển với pha ban đầu là APPLIED
+    application = this.applicationRepo.create({
+      candidateId,
+      jobPostId,
+      status: ApplicationPhase.APPLIED,
+    });
+
+    const saved = await this.applicationRepo.save(application);
+    return { application: saved, isNew: true };
+  }
+
+  // ========================================================
+  // 2. ADVANCE HIRING PIPELINE PHASE
+  // ========================================================
+  async updatePhase(
+    id: string,
+    user: ActiveUserData,
+    dto: UpdateApplicationPhaseDto,
+  ): Promise<JobApplication> {
+    const application = await this.applicationRepo.findOne({
+      where: { id },
+      relations: {
+        candidate: true,
+        jobPost: {
+          recruitmentRequest: {
+            department: true,
+          },
+        },
+      },
+    });
+
+    if (!application) {
+      throw new NotFoundException(`Không tìm thấy hồ sơ ứng tuyển ID: ${id}`);
+    }
+    // Kiểm tra quyền chuyển vòng tuyển dụng
+    await this.assertManagePermission(application, user);
+
+    this.assertValidPhaseTransition(application.status, dto.phase);
+
+    const oldPhase = application.status;
+    application.status = dto.phase;
+    if (dto.internalHrNotes) {
+      application.internalHrNotes = application.internalHrNotes
+        ? `${application.internalHrNotes}\n[${new Date().toISOString()}]: ${dto.internalHrNotes}`
+        : dto.internalHrNotes;
+    }
+    application.updatedBy = user.id || user.sub;
+
+    const saved = await this.applicationRepo.save(application);
+
+    this.eventEmitter.emit(
+      'application.phase_changed',
+      new ApplicationPhaseChangedEvent(
+        saved.id,
+        saved.candidateId,
+        saved.jobPostId,
+        oldPhase,
+        dto.phase,
+        user.id || user.sub || 'SYSTEM',
+        dto.internalHrNotes,
+      ),
+    );
+
+    return saved;
+  }
+
+  // ========================================================
+  // 3. PIPELINE QUERIES BY JOB POST (KANBAN BOARD & SCOPE)
+  // ========================================================
+  async findByJobPost(
+    jobPostId: string,
+    query: QueryJobApplicationsDto,
+    user?: ExtendedUser,
+  ) {
+    const { page = 1, limit = 50, phase, search } = query;
+    const skip = (page - 1) * limit;
+
+    // Kiểm tra quyền xem ứng viên của Job Post này
+    if (user) {
+      const jobPost = await this.jobPostRepo.findOne({
+        where: { id: jobPostId },
+        relations: {
+          recruitmentRequest: {
+            department: true,
+          },
+        },
+      });
+
+      if (!jobPost) {
+        throw new NotFoundException(
+          `Tin tuyển dụng ${jobPostId} không tồn tại.`,
+        );
+      }
+
+      await this.assertJobViewPermission(jobPost, user);
+    }
+
+    const qb: SelectQueryBuilder<JobApplication> = this.applicationRepo
+      .createQueryBuilder('app')
+      .leftJoinAndSelect('app.candidate', 'candidate')
+      .leftJoinAndSelect('app.submissions', 'submissions')
+      .where('app.jobPostId = :jobPostId', { jobPostId });
+
+    if (phase) {
+      qb.andWhere('app.status = :phase', { phase });
+    }
+
+    if (search) {
+      qb.andWhere(
+        '(LOWER(candidate.fullName) LIKE LOWER(:search) OR LOWER(candidate.email) LIKE LOWER(:search) OR candidate.phoneNumber LIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+
+    qb.orderBy('app.createdAt', 'DESC');
+    qb.skip(skip).take(limit);
+
+    const [data, total] = await qb.getManyAndCount();
+    const meta = PaginationMetaDto.create(page, limit, total);
+
+    return { data, meta };
+  }
+
+  // ========================================================
+  // 4. AUTOMATED 3-TIER SCREENING OUTCOME ROUTING
+  // ========================================================
+  // async applyScreeningOutcome(
+  //   applicationId: string,
+  //   result: AiScoreResult,
+  // ): Promise<void> {
+  //   const application = await this.applicationRepo.findOne({
+  //     where: { id: applicationId },
+  //     relations: {
+  //       candidate: true,
+  //       jobPost: true,
+  //     },
+  //   });
+
+  //   if (!application) {
+  //     throw new NotFoundException(
+  //       `Hồ sơ ứng tuyển ${applicationId} không tồn tại.`,
+  //     );
+  //   }
+
+  //   application.aiScore = result.aiScore;
+  //   application.aiTier = result.aiTier;
+  //   application.aiReasoning = result.aiReasoning;
+
+  //   // ── Phân luồng trạng thái theo 3 cấp bậc ──
+  //   switch (result.aiTier) {
+  //     case AiScreeningTier.HIGH:
+  //       // Tier 1 (≥ 80): Tuyển thẳng vào hàng đợi phỏng vấn
+  //       application.status = ApplicationPhase.SHORTLISTED;
+  //       break;
+
+  //     case AiScreeningTier.MEDIUM:
+  //       // Tier 2 (50 - 79): Đưa vào kho dự trữ tiềm năng
+  //       application.status = ApplicationPhase.SAVED_POOL;
+  //       break;
+
+  //     case AiScreeningTier.LOW:
+  //     default:
+  //       // Tier 3 (< 50): Từ chối sơ loại, lưu trữ lịch sử cho kiểm toán
+  //       application.status = ApplicationPhase.SCREENING_REJECTED;
+  //       break;
+  //   }
+
+  //   const saved = await this.applicationRepo.save(application);
+
+  //   // Bắn sự kiện hoàn thành sàng lọc CV
+  //   this.eventEmitter.emit(
+  //     'ats.cv_screened',
+  //     new CandidateScreeningCompletedEvent(
+  //       saved.id,
+  //       saved.candidateId,
+  //       saved.jobPostId,
+  //       result.aiScore,
+  //       result.aiTier,
+  //       result.aiReasoning,
+  //     ),
+  //   );
+
+  //   // Nếu đạt High Tier, kích hoạt thông báo phỏng vấn ngay cho HR & Trưởng bộ phận
+  //   if (result.aiTier === AiScreeningTier.HIGH) {
+  //     this.eventEmitter.emit(
+  //       'ats.candidate_shortlisted',
+  //       new CandidateShortlistedEvent(
+  //         saved.id,
+  //         saved.candidateId,
+  //         saved.jobPostId,
+  //         saved.candidate.fullName,
+  //         saved.candidate.email,
+  //         saved.jobPost.publicTitle,
+  //         result.aiScore,
+  //       ),
+  //     );
+  //   }
+  // }
+  async applyScreeningOutcome(
+    applicationId: string,
+    scoreResult: CvScoreResult,
+    submissionId?: string,
+  ): Promise<JobApplication> {
+    const application = await this.applicationRepo.findOne({
+      where: { id: applicationId },
+      relations: {
+        candidate: true,
+        jobPost: true,
+      },
+    });
+
+    if (!application) {
+      throw new NotFoundException(
+        `Hồ sơ ứng tuyển ${applicationId} không tồn tại.`,
+      );
+    }
+
+    // 1. Phân luồng chính xác theo 3 bậc chuẩn của AiScreeningTier
+    let nextStatus: ApplicationPhase;
+
+    switch (scoreResult.aiTier) {
+      case AiScreeningTier.HIGH:
+        nextStatus = ApplicationPhase.SHORTLISTED;
+        break;
+
+      case AiScreeningTier.LOW:
+        nextStatus = ApplicationPhase.SCREENING_REJECTED;
+        break;
+
+      case AiScreeningTier.MEDIUM:
+      default:
+        nextStatus = ApplicationPhase.SAVED_POOL;
+        break;
+    }
+
+    // 2. Cập nhật trạng thái tổng thể cho JobApplication
+    application.status = nextStatus;
+    application.aiScore = scoreResult.aiScore;
+    application.aiTier = scoreResult.aiTier;
+    application.aiReasoning = scoreResult.aiReasoning;
+
+    const savedApp = await this.applicationRepo.save(application);
+
+    // 3. Lưu vết điểm số độc lập cho từng submission
+    let targetSubmission: ApplicationSubmission | null = null;
+
+    if (submissionId) {
+      targetSubmission = await this.submissionRepo.findOneBy({
+        id: submissionId,
+      });
+    }
+
+    if (!targetSubmission) {
+      targetSubmission = await this.submissionRepo.findOne({
+        where: { applicationId },
+        order: { createdAt: 'DESC' },
+      });
+    }
+
+    if (targetSubmission) {
+      targetSubmission.aiScore = scoreResult.aiScore;
+      targetSubmission.aiTier = scoreResult.aiTier;
+      targetSubmission.aiReasoning = scoreResult.aiReasoning;
+
+      // 4. Nếu Tier LOW: Xóa CV vật lý trên AWS S3 và đánh dấu đã tiêu hủy
+      if (scoreResult.aiTier === AiScreeningTier.LOW) {
+        const fileKeyToDelete = targetSubmission.cvFileKey;
+
+        if (fileKeyToDelete) {
+          this.logger.log(
+            `[Low Tier Policy] Ứng viên thuộc tier LOW (${scoreResult.aiScore}đ). Tiến hành xóa CV ${fileKeyToDelete} khỏi S3 để tiết kiệm dung lượng & bảo vệ dữ liệu...`,
+          );
+          await this.s3StorageService.deleteFile(fileKeyToDelete);
+        }
+
+        // Xóa liên kết file vật lý nhưng BẢO TOÀN toàn bộ aiScore, aiReasoning, aiTier
+        targetSubmission.cvFileKey = null;
+        targetSubmission.cvUrl = '';
+        targetSubmission.isCvPurged = true;
+      }
+
+      await this.submissionRepo.save(targetSubmission);
+    }
+
+    // 5. Kích hoạt Domain Events với đúng thứ tự tham số
+    const currentSubmissionId = targetSubmission?.id ?? submissionId ?? null;
+
+    // 4. BẮN SỰ KIỆN THÔNG BÁO CHO HỆ THỐNG
+    if (scoreResult.aiTier === AiScreeningTier.HIGH) {
+      this.eventEmitter.emit(
+        'ats.candidate_shortlisted',
+        new CandidateShortlistedEvent(
+          savedApp.id,
+          savedApp.candidateId,
+          savedApp.jobPostId,
+          savedApp.candidate?.fullName ?? 'Ứng viên',
+          savedApp.candidate?.email ?? '',
+          savedApp.jobPost?.publicTitle ?? 'Vị trí tuyển dụng',
+          scoreResult.aiScore,
+          null, // hrRecipientId
+          currentSubmissionId,
+        ),
+      );
+    } else if (scoreResult.aiTier === AiScreeningTier.LOW) {
+      this.eventEmitter.emit(
+        'ats.candidate_rejected',
+        new CandidateScreeningRejectedEvent(
+          savedApp.id,
+          savedApp.candidateId,
+          savedApp.jobPostId,
+          savedApp.candidate?.fullName ?? 'Ứng viên',
+          scoreResult.aiScore,
+          scoreResult.aiReasoning,
+          currentSubmissionId,
+          true, // isCvPurged
+        ),
+      );
+    }
+
+    return savedApp;
+  }
+
+  // ========================================================
+  // 5. PROMOTE CANDIDATE FROM SAVED_POOL (HR OVERRIDE)
+  // ========================================================
+  async promoteFromPool(
+    applicationId: string,
+    user: ActiveUserData,
+    targetPhase:
+      | ApplicationPhase.SHORTLISTED
+      | ApplicationPhase.INTERVIEWING = ApplicationPhase.SHORTLISTED,
+    note?: string,
+  ): Promise<JobApplication> {
+    const application = await this.applicationRepo.findOne({
+      where: { id: applicationId },
+      relations: {
+        candidate: true,
+        jobPost: {
+          recruitmentRequest: {
+            department: true,
+          },
+        },
+      },
+    });
+
+    if (!application) {
+      throw new NotFoundException(
+        `Không tìm thấy hồ sơ ứng tuyển ${applicationId}`,
+      );
+    }
+
+    // Kiểm tra quyền hạn trước khi vớt ứng viên
+    await this.assertManagePermission(application, user);
+
+    if (application.status !== ApplicationPhase.SAVED_POOL) {
+      throw new BadRequestException(
+        `Chỉ có thể vớt ứng viên đang ở trạng thái SAVED_POOL. Trạng thái hiện tại: ${application.status}`,
+      );
+    }
+
+    application.status = targetPhase;
+    const historyNote = `[${new Date().toISOString()}] Vớt hồ sơ từ Kho dự phòng lên ${targetPhase} bởi ${user.fullName || user.id}. ${note || ''}`;
+    application.internalHrNotes = application.internalHrNotes
+      ? `${application.internalHrNotes}\n${historyNote}`
+      : historyNote;
+    application.updatedBy = user.id || user.sub;
+
+    const saved = await this.applicationRepo.save(application);
+
+    this.eventEmitter.emit(
+      'ats.candidate_promoted',
+      new CandidatePromotedFromPoolEvent(
+        saved.id,
+        saved.candidateId,
+        saved.jobPostId,
+        user.id || user.sub || 'SYSTEM',
+        note,
+      ),
+    );
+
+    return saved;
+  }
+
+  // ========================================================
+  // GET ALL SUBMISSIONS FOR A SPECIFIC APPLICATION
+  // ========================================================
+  async findSubmissionsByApplicationId(
+    applicationId: string,
+    user?: ExtendedUser,
+  ): Promise<ApplicationSubmission[]> {
+    // 1. Kiểm tra sự tồn tại của hồ sơ ứng tuyển
+    const application = await this.applicationRepo.findOne({
+      where: { id: applicationId },
+      relations: {
+        jobPost: {
+          recruitmentRequest: {
+            department: true,
+          },
+        },
+      },
+    });
+
+    if (!application) {
+      throw new NotFoundException(
+        `Không tìm thấy hồ sơ ứng tuyển với mã ID: ${applicationId}`,
+      );
+    }
+
+    if (user) {
+      await this.assertJobViewPermission(application.jobPost, user);
+    }
+
+    // 2. Truy vấn toàn bộ lịch sử nộp CV của đợt ứng tuyển này
+    return this.submissionRepo.find({
+      where: { applicationId },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  // ========================================================
+  // 7. PRIVATE HELPER RBAC ASSERTIONS
+  // ========================================================
+  private extractJobDepartmentId(jobPost?: JobPost | null): string | undefined {
+    if (!jobPost) return undefined;
+
+    const req = jobPost.recruitmentRequest as unknown as
+      Record<string, unknown> | null | undefined;
+
+    if (req) {
+      if (
+        'departmentId' in req &&
+        typeof req.departmentId === 'string' &&
+        req.departmentId.length > 0
+      ) {
+        return req.departmentId;
+      }
+
+      if (
+        'department' in req &&
+        req.department &&
+        typeof req.department === 'object'
+      ) {
+        const dept = req.department as { id?: unknown };
+        if (typeof dept.id === 'string' && dept.id.length > 0) {
+          return dept.id;
+        }
+      }
+    }
+
+    const jobRecord = jobPost as unknown as Record<string, unknown>;
+    if (
+      typeof jobRecord.departmentId === 'string' &&
+      jobRecord.departmentId.length > 0
+    ) {
+      return jobRecord.departmentId;
+    }
+
+    return undefined;
+  }
+  private async assertManagePermission(
+    application: JobApplication,
+    user: ExtendedUser,
+  ): Promise<void> {
+    if (hasPermission(user, 'ats_candidate', 'update', 'any')) {
+      return;
+    }
+
+    const canUpdateDept =
+      hasPermission(user, 'ats_candidate', 'update', 'dept') ||
+      hasPermission(user, 'ats_job_post', 'approve', 'dept');
+
+    const userDeptId = await getUserDepartmentId(
+      this.applicationRepo.manager,
+      user,
+    );
+    const jobDeptId = this.extractJobDepartmentId(application.jobPost);
+
+    const isOwnDept = Boolean(userDeptId && userDeptId === jobDeptId);
+
+    if (!canUpdateDept || !isOwnDept) {
+      throw new ForbiddenException(
+        'Bạn không có quyền cập nhật tiến trình ứng tuyển của vị trí thuộc phòng ban này.',
+      );
+    }
+  }
+
+  private async assertJobViewPermission(
+    jobPost: JobPost,
+    user: ExtendedUser,
+  ): Promise<void> {
+    if (hasPermission(user, 'ats_candidate', 'read', 'any')) {
+      return;
+    }
+
+    const canReadDept = hasPermission(user, 'ats_candidate', 'read', 'dept');
+    const userDeptId = await getUserDepartmentId(
+      this.applicationRepo.manager,
+      user,
+    );
+    const jobDeptId = this.extractJobDepartmentId(jobPost);
+
+    const isOwnDept = Boolean(userDeptId && userDeptId === jobDeptId);
+
+    if (!canReadDept || !isOwnDept) {
+      throw new ForbiddenException(
+        'Bạn không có quyền truy cập vào danh sách ứng viên của tin tuyển dụng này.',
+      );
+    }
+  }
+
+  private assertValidPhaseTransition(
+    current: ApplicationPhase,
+    target: ApplicationPhase,
+  ): void {
+    const allowed: Record<ApplicationPhase, ApplicationPhase[]> = {
+      [ApplicationPhase.APPLIED]: [
+        ApplicationPhase.AI_SCREENING,
+        ApplicationPhase.SHORTLISTED,
+        ApplicationPhase.SAVED_POOL,
+        ApplicationPhase.SCREENING_REJECTED,
+        ApplicationPhase.WITHDRAWN,
+      ],
+      [ApplicationPhase.AI_SCREENING]: [
+        ApplicationPhase.SHORTLISTED,
+        ApplicationPhase.SAVED_POOL,
+        ApplicationPhase.SCREENING_REJECTED,
+        ApplicationPhase.WITHDRAWN,
+      ],
+      [ApplicationPhase.SHORTLISTED]: [
+        ApplicationPhase.INTERVIEWING,
+        ApplicationPhase.SAVED_POOL,
+        ApplicationPhase.WITHDRAWN,
+      ],
+      [ApplicationPhase.SAVED_POOL]: [
+        ApplicationPhase.SHORTLISTED,
+        ApplicationPhase.INTERVIEWING,
+        ApplicationPhase.SCREENING_REJECTED,
+      ],
+      [ApplicationPhase.INTERVIEWING]: [
+        ApplicationPhase.OFFERED,
+        ApplicationPhase.SAVED_POOL,
+        ApplicationPhase.SCREENING_REJECTED,
+        ApplicationPhase.WITHDRAWN,
+      ],
+      [ApplicationPhase.OFFERED]: [
+        ApplicationPhase.HIRED,
+        ApplicationPhase.WITHDRAWN,
+      ],
+      [ApplicationPhase.HIRED]: [],
+      [ApplicationPhase.SCREENING_REJECTED]: [
+        ApplicationPhase.SAVED_POOL, // Cho phép khôi phục vào kho lưu trữ
+      ],
+      [ApplicationPhase.WITHDRAWN]: [],
+    };
+
+    if (!allowed[current]?.includes(target)) {
+      throw new ConflictException(
+        `Không thể chuyển đổi trạng thái hồ sơ từ ${current} sang ${target}.`,
+      );
+    }
+  }
+}

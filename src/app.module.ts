@@ -8,6 +8,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { BullModule } from '@nestjs/bullmq';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -29,6 +30,12 @@ import { IdentityModule } from './identity/identity.module';
 import { UserAvatarsModule } from './user-avatars/user-avatars.module';
 import { MailModule } from './mail/mail.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { AuditLogModule } from './audit-log/audit-log.module';
+import { DepartmentsModule } from './departments/departments.module';
+import { TicketModule } from './tickets/ticket.module';
+import { AtsModule } from './ats/ats.module';
+import { StorageModule } from './ats/storage.module';
+// import { AuditLogModule } from './audit-log/audit-log.module';
 
 @Module({
   imports: [
@@ -41,6 +48,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 
     CacheModule,
     MailModule,
+    StorageModule,
     // 2. Database Connection using our Enterprise Factory
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -82,9 +90,21 @@ import { NotificationsModule } from './notifications/notifications.module';
     // 5. Importcentralized CronModule
     CronModule,
 
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => ({
+        connection: {
+          host: configService.get<string>('REDIS_HOST', 'localhost'),
+          port: configService.get<number>('REDIS_PORT', 6379),
+          // password: configService.get('REDIS_PASSWORD'),
+        },
+      }),
+      inject: [ConfigService],
+    }),
     // 6. Application Modules
     AuthModule,
     UsersModule,
+    DepartmentsModule,
     ProfilesModule,
     IdentityModule,
     UserAvatarsModule,
@@ -92,12 +112,11 @@ import { NotificationsModule } from './notifications/notifications.module';
     PermissionsModule,
     SystemResourcesModule,
     NotificationsModule,
+    AuditLogModule,
+    TicketModule,
+    AtsModule,
   ],
-  controllers: [
-    AppController,
-    // SystemResourcesController safely removed from here.
-    // It belongs exclusively in SystemResourcesModule!
-  ],
+  controllers: [AppController],
   providers: [
     AppService,
     // 1. Global Rate Limiting Guard

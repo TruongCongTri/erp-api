@@ -10,13 +10,16 @@ import { Role } from '../roles/entities/role.entity';
 import { UserStatus } from '../users/enums/user-status.enum';
 import { PermissionAction } from '../permissions/enums/permission-action.enum';
 import { PermissionScope } from '../permissions/enums/permission-scope.enum';
-import { resourcesData } from 'src/data/resources';
-import { rolesMatrix } from 'src/data/roles-matrix';
-import { employeeRoster } from 'src/data/users';
 import { CitizenIdentityCard } from 'src/identity/entities/citizen-identity.entity';
 import { Gender } from 'src/identity/enums/citizen-identity.enum';
 import { EmployeeProfile } from 'src/employee-profiles/entities/employee-profile.entity';
 import { User } from 'src/users/entities/users.entity';
+
+import { resourcesData } from 'src/data/resources';
+import { rolesMatrix } from 'src/data/roles-matrix';
+import { employeeRoster } from 'src/data/users';
+import { departmentsData } from 'src/data/departments';
+import { Department } from 'src/departments/entities/department.entity';
 
 // A mock ConfigService to satisfy the TypeORM Factory outside of NestJS
 const mockConfigService = {
@@ -99,6 +102,7 @@ async function runSeed() {
   const userRepo = dataSource.getRepository(User);
   const profileRepo = dataSource.getRepository(EmployeeProfile);
   const identityRepo = dataSource.getRepository(CitizenIdentityCard);
+  const departmentRepo = dataSource.getRepository(Department);
 
   // 1. Seed Resources
   console.log('📦 Seeding System Resources...');
@@ -168,7 +172,9 @@ async function runSeed() {
     }
   }
 
+  // ==========================================
   // 3. Seed Roles
+  // ==========================================
   console.log('🛡️ Seeding Roles...');
   let superAdminRole: Role | null = null;
 
@@ -178,10 +184,10 @@ async function runSeed() {
       role = roleRepo.create({
         slug: roleDef.slug,
         name: roleDef.name,
-        description: `System generated role for ${roleDef.name}`,
+        // description: `System generated role for ${roleDef.name}`,
         isLive: true,
         isDefault: false,
-      } as any) as unknown as Role;
+      });
     }
 
     role.permissions = rolePermissionMap[roleDef.slug];
@@ -192,11 +198,49 @@ async function runSeed() {
     }
   }
 
-  // 4 & 5. Seed Profiles and the Single Super Admin Account
+  // ==========================================
+  // 4. Seed Departments (Hierarchical)
+  // ==========================================
+  console.log('🏢 Seeding Departments (Organization Tree)...');
+  const savedDepts: Record<string, Department> = {};
+
+  // Pass 1: Insert all departments without parents to establish IDs
+  for (const dData of departmentsData) {
+    const dept = departmentRepo.create({
+      slug: dData.slug,
+      code: dData.code,
+      name: dData.name,
+      isActive: true,
+      // createdBy: null,
+    });
+    const saved = await departmentRepo.save(dept);
+    savedDepts[dData.slug] = saved;
+  }
+
+  // Pass 2: Re-link parents to build the hierarchy tree
+  for (const dData of departmentsData) {
+    if (dData.parentSlug && savedDepts[dData.parentSlug]) {
+      const child = savedDepts[dData.slug];
+      child.parentId = savedDepts[dData.parentSlug].id;
+      // Tránh query TypeORM phức tạp, gán ID trực tiếp cho cột parent_id
+      await departmentRepo.update(child.id, { parentId: child.parentId });
+    }
+  }
+  console.log(`✅ Successfully seeded ${departmentsData.length} Departments!`);
+
+  // ==========================================
+  // 5. Seed Profiles and Users
+  // ==========================================
   console.log('👥 Seeding Employee Profiles (Waiting to be claimed)...');
 
   const defaultPassword = await bcrypt.hash('ChinhNam@2026', 10);
   let seededCount = 0;
+
+  const autoProvisionUserRoles = [
+    'SUPER_ADMIN',
+    'DIR_HR_ADMIN', // 1 HR user
+    'HEAD_ARCHITECTURE', // 1 Department Head
+  ];
 
   for (const emp of employeeRoster) {
     const assignedRole = await roleRepo.findOneBy({ slug: emp.roleSlug });
@@ -204,6 +248,10 @@ async function runSeed() {
       assignedRole ||
       (await roleRepo.findOneBy({ slug: 'OPERATOR' })) ||
       superAdminRole;
+
+    const matchedDept: Department | undefined = Object.values(savedDepts).find(
+      (d) => d.name === emp.department || d.slug === emp.department,
+    );
 
     // 1. Generate unique CCCD/CMND Number (Mocking a 12-digit ID)
     const numericPart = emp.employeeCode.replace(/[^0-9]/g, '');
@@ -231,9 +279,9 @@ async function runSeed() {
     const profile = profileRepo.create({
       employeeCode: emp.employeeCode, // Clean code (e.g. A00-000, CN-XD.2608)
       jobTitle: emp.jobTitle,
-      department: emp.department || 'Chưa phân bổ', // 👈 Hydrating Department
+      designatedDepartment: matchedDept,
+      designatedRole: finalRole as Role,
       isLive: true,
-      designatedRole: finalRole as Role, // 👈 Hydrating Role for claim
       joinDate: new Date('2026-01-01'),
 
       // Core Demographics
@@ -244,8 +292,8 @@ async function runSeed() {
       identityCard: identityCard, // Cascades automatically
     });
 
-    // 4. ONLY Create a User Account for the Super Admin
-    if (emp.roleSlug === 'SUPER_ADMIN') {
+    // 4. Check if the employee's role is in our auto-provision list
+    if (autoProvisionUserRoles.includes(emp.roleSlug)) {
       let user = await userRepo.findOneBy({ email: emp.email });
       if (!user) {
         user = userRepo.create({
@@ -254,24 +302,205 @@ async function runSeed() {
           passwordHash: defaultPassword,
           status: UserStatus.ACTIVE,
           role: finalRole as Role,
+          departmentId: matchedDept ? matchedDept.id : null,
         });
 
-        // Link the profile to the Super Admin User
+        // Link the profile to the User (Making them fully registered)
         user.profile = profile;
-        await userRepo.save(user); // Cascades and saves the Profile & IdentityCard
-        console.log(`✅ Super Admin created: ${emp.email}`);
+        await userRepo.save(user);
+        console.log(
+          `✅ Auto-created user account: ${emp.email} [${emp.roleSlug}]`,
+        );
       }
     } else {
       // 5. For everyone else, just save the Profile to the DB.
       // It sits waiting for a GUEST user to claim it.
       await profileRepo.save(profile);
     }
-
     seededCount++;
   }
 
   console.log(`✅ Successfully seeded ${seededCount} profiles for claiming!`);
 
+  // // 6. Seed ATS Data (Jobs & Requests)
+  // console.log('🏢 Seeding ATS Job Requests and Job Posts...');
+
+  // // Pre-fetch the HR Admin so we can assign them as the creator of the JobPosts
+  // const hrAdmin = await userRepo.findOneBy({
+  //   email: 'superadmin@chinhnam.vn',
+  // });
+
+  // if (hrAdmin) {
+  //   for (const [index, data] of jobRequestSeedData.entries()) {
+  //     // Find the specific requester based on the email in the mock data
+  //     const requester =
+  //       (await userRepo.findOneBy({ email: data.requesterEmail })) || hrAdmin;
+
+  //     // 1. Create the Recruitment Request
+  //     const request = requestRepo.create({
+  //       jobTitle: data.jobTitle,
+  //       department: data.department,
+  //       headcount: data.headcount,
+  //       targetSalaryMin: data.targetSalaryMin,
+  //       targetSalaryMax: data.targetSalaryMax,
+  //       rawRequirements: data.rawRequirements,
+  //       reasonForHiring: data.reasonForHiring,
+  //       companyBenefits: data.companyBenefits,
+  //       aiDraftedDescription: data.aiDraftedDescription,
+  //       deadline: data.deadline,
+  //       level: data.level,
+  //       jobType: data.jobType,
+  //       workingModel: data.workingModel,
+  //       location: data.location,
+  //       workingHours: data.workingHours,
+  //       experienceYears: data.experienceYears,
+  //       educationLevel: data.educationLevel,
+  //       gender: data.gender,
+  //       ageRange: data.ageRange,
+  //       mustHaveSkills: data.mustHaveSkills,
+  //       niceToHaveSkills: data.niceToHaveSkills,
+  //       languages: data.languages,
+
+  //       status: RecruitmentRequestStatus.APPROVED, // All set to approved for easy testing
+  //       requester: requester,
+  //       createdBy: requester.id,
+  //       createdByName: requester.fullName,
+  //     });
+  //     await requestRepo.save(request);
+
+  //     // 2. Build the external mapping for job boards
+  //     // Every job gets these 5 standard boards:
+  //     const mapping: Record<string, string> = {
+  //       linkedin: `ln-mock-${index}`,
+  //       topcv: `topcv-mock-${index}`,
+  //       careerviet: `cv-mock-${index}`,
+  //       vietnamworks: `vnw-mock-${index}`,
+  //       vieclam24h: `vl24h-mock-${index}`,
+  //     };
+
+  //     // If it's an IT job, append ITviec
+  //     if (data.isItJob) {
+  //       mapping['itviec'] = `itviec-mock-${index}`;
+  //     }
+
+  //     // Safe Salary Formatting
+  //     const formattedSalary =
+  //       data.targetSalaryMin && data.targetSalaryMax
+  //         ? `${data.targetSalaryMin / 1000000} - ${data.targetSalaryMax / 1000000} Triệu VNĐ`
+  //         : 'Thỏa thuận';
+
+  //     // 3. Create the Published Job Post
+  //     const jobPost = jobPostRepo.create({
+  //       publicTitle: request.jobTitle,
+  //       aiDraftedDescription: request.aiDraftedDescription,
+  //       companyBenefits: request.companyBenefits,
+  //       status: JobPostStatus.PUBLISHED,
+  //       headcount: data.headcount,
+  //       deadline: data.deadline,
+  //       level: data.level,
+  //       jobType: data.jobType,
+  //       workingModel: data.workingModel,
+  //       location: data.location,
+  //       workingHours: data.workingHours,
+  //       experienceYears: data.experienceYears,
+  //       educationLevel: data.educationLevel,
+  //       gender: data.gender,
+  //       ageRange: data.ageRange,
+  //       mustHaveSkills: data.mustHaveSkills,
+  //       niceToHaveSkills: data.niceToHaveSkills,
+  //       languages: data.languages,
+  //       publicSalaryDisplay: formattedSalary,
+  //       hrContactName: hrAdmin.fullName,
+  //       hrContactEmail: hrAdmin.email,
+  //       hrContactPhone: '0988777666', // Mock HR phone number
+
+  //       externalMapping: mapping,
+  //       request: request,
+  //       createdBy: hrAdmin.id,
+  //       createdByName: hrAdmin.fullName,
+  //     });
+  //     await jobPostRepo.save(jobPost);
+  //   }
+  //   console.log(
+  //     `✅ Successfully seeded 10 Recruitment Requests & Job Posts with External Mappings!`,
+  //   );
+  // } else {
+  //   console.warn('⚠️ Skipped ATS Seeding: Could not find HR Admin test user.');
+  // }
+
+  // ==========================================
+  // 7. Seed Candidates, Applications & Submissions
+  // ==========================================
+  // console.log('🧑‍💻 Seeding Candidates and Job Applications across platforms...');
+
+  // // 1. Fetch all the Job Posts we just created (Need the relations to know the department)
+  // const allJobPosts = await jobPostRepo.find({
+  //   relations: { request: true },
+  // });
+
+  // if (allJobPosts.length > 0) {
+  //   // 2. Generate the massive JSON mock data using our helper
+  //   const candidatesMocks = generateCandidateSeedData(allJobPosts);
+
+  //   // 3. Save everything to the database
+  //   for (const mockCand of candidatesMocks) {
+  //     // A. Save the Candidate
+  //     const candidate = candidateProfileRepo.create({
+  //       fullName: mockCand.fullName,
+  //       email: mockCand.email,
+  //       phoneNumber: mockCand.phoneNumber,
+  //       linkedInUrl: mockCand.linkedInUrl,
+  //       cvReferences: mockCand.cvReferences,
+  //     });
+  //     const savedCandidate = await candidateProfileRepo.save(candidate);
+
+  //     // B. Save their Applications
+  //     for (const mockApp of mockCand.applications as unknown as SeedApplication[]) {
+  //       // 1. Find the exact JobPost reference
+  //       const jobPostRef = allJobPosts.find((j) => j.id === mockApp.jobPostId);
+
+  //       // 2. Create the entity with ONLY standard columns
+  //       const application = applicationRepo.create({
+  //         status: mockApp.status,
+  //         aiScore: mockApp.aiScore,
+  //         aiReasoning: mockApp.aiReasoning,
+  //       });
+
+  //       // 3. FOOLPROOF RELATION ASSIGNMENT: Assign relations directly to the instance
+  //       application.candidate = savedCandidate;
+  //       if (jobPostRef) {
+  //         application.jobPost = jobPostRef;
+  //       }
+
+  //       // 4. Save to database
+  //       const savedApp = await applicationRepo.save(application);
+
+  //       // C. Save the multiple Submissions (Platforms) for this application
+  //       const submissions = mockApp.submissions.map((sub) => {
+  //         const submission = submissionRepo.create({
+  //           platformSource: sub.platformSource,
+  //           externalApplicationId: sub.externalApplicationId,
+  //           coverLetter: sub.coverLetter,
+  //           cvUrl: sub.cvUrl,
+  //           cvFileKey: sub.cvFileKey,
+  //         });
+
+  //         // Direct assignment for submission relation too
+  //         submission.application = savedApp;
+  //         return submission;
+  //       });
+
+  //       // Save all submissions for this application in bulk
+  //       await submissionRepo.save(submissions);
+  //     }
+  //   }
+
+  //   console.log(
+  //     `✅ Successfully seeded 70 Candidates and thousands of cross-platform Submissions!`,
+  //   );
+  // } else {
+  //   console.warn('⚠️ Skipped Candidate Seeding: No Job Posts found.');
+  // }
   await dataSource.destroy();
   console.log('🎉 Seeding Complete!');
 }

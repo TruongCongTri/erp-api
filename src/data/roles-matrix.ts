@@ -1,657 +1,469 @@
+import {
+  defineRole,
+  grant,
+  forDeptHead,
+  forDeputyHead,
+  forStaff,
+  ATS_HR_FULL_PERMS,
+  ATS_VIEWER_PERMS,
+  DEPT_HEAD_COMMON_PERMS,
+  STAFF_COMMON_PERMS,
+} from '../auth/utils/permission-builder';
+
 export const rolesMatrix = [
-  {
-    slug: 'SUPER_ADMIN',
-    name: 'Super Admin',
-    perms: ['*:*:any'], // Ultimate global authority
-  },
   // =====================================
-  // 1. EXECUTIVE & SUPPORT PILLAR
+  // 1. EXECUTIVE & SYSTEM ADMIN
   // =====================================
-  {
-    slug: 'EXEC_DIRECTOR',
-    name: 'Tổng Giám đốc',
-    perms: ['*:*:any'], // Ultimate global authority
-  },
-  {
-    slug: 'DEP_EXEC_DIRECTOR',
-    name: 'Phó Tổng Giám đốc',
-    perms: ['*:create:any', '*:update:any', '*:read:any'],
-  },
-  {
-    slug: 'EXEC_ASSISTANT',
-    name: 'Trợ lý Điều hành',
-    perms: [
-      '*:read:any',
-      'crm:update:dept',
-      'meeting:*:any',
-      'report:create:own',
-      'document:*:dept',
-      'task:*:any',
-    ],
-  },
-  {
-    slug: 'EXEC_ASSISTANT_DESIGN',
-    name: 'Thư ký TGĐ (Khối Thiết kế)',
-    perms: [
-      'design:read:any',
-      'mep:read:any',
-      'estimation:read:any',
-      'hr:read:dept',
-      'meeting:*:dept',
-      'report:create:own',
-      'document:*:dept',
-      'task:*:dept',
-      'leave_request:create:own',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'DIR_HR_ADMIN',
-    name: 'Giám Đốc Hành chính Nhân sự',
-    perms: [
-      'hr:*:any',
-      'asset:read:any',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:*:any',
-    ],
-  },
-  {
-    slug: 'DEP_DIR_HR_ADMIN',
-    name: 'Phó Giám Đốc Hành chính Nhân sự',
-    perms: [
-      'hr:create:dept',
-      'hr:update:dept',
-      'hr:read:dept',
-      'asset:read:any',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:*:any',
-    ],
-  },
-  {
-    slug: 'STAFF_HR',
-    name: 'Nhân viên Hành chính Nhân sự',
-    perms: [
-      'hr:create:dept',
-      'hr:update:own',
-      'hr:read:dept',
-      'document:create:own',
-      'document:read:dept',
-      'leave_request:create:own',
-      'meeting:read:dept',
-      'task:*:own',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'SYSTEM_ADMIN',
-    name: 'Quản trị Hệ thống (IT/AI)',
-    perms: [
-      'it_system:*:any',
-      '*:read:any',
-      'audit_log:read:any',
-      'policy:manage:any',
-      'task:*:any',
-    ],
-  },
+  defineRole('SUPER_ADMIN', 'Super Admin', '*:*:any'),
+  defineRole('EXEC_DIRECTOR', 'Tổng Giám đốc', '*:*:any'),
+
+  defineRole(
+    'DEP_EXEC_DIRECTOR',
+    'Phó Tổng Giám đốc',
+    '*:create:any',
+    '*:update:any',
+    '*:read:any',
+    'ats_requisition:approve:any',
+    'ats_job_post:approve:any',
+  ),
+
+  defineRole(
+    'EXEC_ASSISTANT',
+    'Trợ lý Điều hành',
+    '*:read:any',
+    'crm:update:dept',
+    'meeting:*:any',
+    'report:create:own',
+    'document:*:dept',
+    'task:*:any',
+    ATS_VIEWER_PERMS,
+  ),
+
+  defineRole(
+    'EXEC_ASSISTANT_DESIGN',
+    'Thư ký TGĐ (Khối Thiết kế)',
+    grant('design', 'read', 'any'),
+    grant('mep', 'read', 'any'),
+    grant('estimation', 'read', 'any'),
+    grant('hr', 'read', 'dept'),
+    grant('ats_requisition', 'read', 'dept'),
+    grant('ats_job_post', 'read', 'dept'),
+    'meeting:*:dept',
+    'report:create:own',
+    'document:*:dept',
+    'task:*:dept',
+    'leave_request:create:own',
+    'policy:read:any',
+  ),
+
+  defineRole(
+    'SYSTEM_ADMIN',
+    'Quản trị Hệ thống (IT/AI)',
+    'it_system:*:any',
+    '*:read:any',
+    'audit_log:read:any',
+    'policy:manage:any',
+    'task:*:any',
+  ),
 
   // =====================================
-  // 2. FINANCE & ACCOUNTING
+  // 2. HUMAN RESOURCES (HR PILLAR)
   // =====================================
-  {
-    slug: 'DIR_ACCOUNTING',
-    name: 'Giám đốc Tài chính',
-    perms: [
-      'finance:*:any',
-      'contract:read:any',
-      'supply:read:any',
-      'hr:read:any',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'DEP_HEAD_ACCOUNTING',
-    name: 'Phó phòng Tài chính Kế toán',
-    perms: [
-      'finance:create:dept',
-      'finance:update:dept',
-      'finance:read:any',
-      'document:*:dept',
-      'meeting:*:dept',
-      'leave_request:create:own',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'STAFF_ACCOUNTING',
-    name: 'Nhân viên Kế toán',
-    perms: [
-      'finance:create:dept',
-      'finance:update:own',
-      'finance:read:dept',
-      'document:read:dept',
-      'leave_request:create:own',
-      'task:*:own',
-      'meeting:read:dept',
-      'policy:read:any',
-    ],
-  },
+  defineRole(
+    'DIR_HR_ADMIN',
+    'Giám Đốc Hành chính Nhân sự',
+    'hr:*:any',
+    grant('asset', 'read', 'any'),
+    grant('audit_log', 'read', 'dept'),
+    grant('audit_log', 'read', 'own'),
+    DEPT_HEAD_COMMON_PERMS,
+    ATS_HR_FULL_PERMS,
+  ),
+
+  defineRole(
+    'DEP_DIR_HR_ADMIN',
+    'Phó Giám Đốc Hành chính Nhân sự',
+    grant('hr', ['create', 'update', 'read'], 'dept'),
+    grant('asset', 'read', 'any'),
+    grant('audit_log', 'read', 'dept'),
+    grant('audit_log', 'read', 'own'),
+    DEPT_HEAD_COMMON_PERMS,
+    ATS_HR_FULL_PERMS,
+  ),
+
+  defineRole(
+    'STAFF_HR',
+    'Nhân viên Hành chính Nhân sự',
+    grant('hr', 'create', 'dept'),
+    grant('hr', 'update', 'own'),
+    grant('hr', 'read', 'dept'),
+    grant('ats_requisition', ['read', 'update'], 'any'),
+    grant('audit_log', 'read', 'own'),
+    'ats_job_post:*:any',
+    'ats_candidate:*:any',
+    STAFF_COMMON_PERMS,
+  ),
 
   // =====================================
-  // 3. PROCUREMENT & ASSETS
+  // 3. FINANCE & ACCOUNTING
   // =====================================
-  {
-    slug: 'HEAD_SUPPLY',
-    name: 'Trưởng phòng Cung ứng',
-    perms: [
-      'supply:*:dept',
-      'asset:update:any',
-      'finance:read:own',
-      'design:read:any',
-      'estimation:read:any',
-      'construction:read:any',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'DEP_HEAD_SUPPLY',
-    name: 'Phó phòng Cung ứng',
-    perms: [
-      'supply:create:dept',
-      'supply:update:dept',
-      'supply:read:dept',
-      'asset:update:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'leave_request:create:own',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'STAFF_SUPPLY',
-    name: 'Nhân viên Cung ứng & Thủ kho',
-    perms: [
-      'supply:create:own',
-      'supply:update:own',
-      'supply:read:dept',
-      'asset:update:dept',
-      'asset:read:dept',
-      'document:read:dept',
-      'leave_request:create:own',
-      'task:*:own',
-      'meeting:read:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'HEAD_ASSET',
-    name: 'Trưởng phòng Vật lực',
-    perms: [
-      'asset:*:dept',
-      'supply:read:dept',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'DEP_HEAD_ASSET',
-    name: 'Phó phòng Vật lực',
-    perms: [
-      'asset:create:dept',
-      'asset:update:dept',
-      'asset:delete:dept',
-      'supply:read:dept',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'OPERATOR',
-    name: 'Khối Vận hành & Hậu cần',
-    perms: [
-      'asset:read:own',
-      'asset:update:own',
-      'hr:read:own',
-      'leave_request:create:own',
-      'task:*:own',
-      'policy:read:any',
-    ],
-  },
+  defineRole(
+    'DIR_ACCOUNTING',
+    'Giám đốc Tài chính',
+    forDeptHead(grant('finance', '*', 'any'), [
+      ...grant('contract', 'read', 'any'),
+      ...grant('supply', 'read', 'any'),
+      ...grant('hr', 'read', 'any'),
+    ]),
+  ),
+
+  defineRole(
+    'DEP_HEAD_ACCOUNTING',
+    'Phó phòng Tài chính Kế toán',
+    forDeputyHead(
+      [
+        ...grant('finance', ['create', 'update'], 'dept'),
+        ...grant('finance', 'read', 'any'),
+      ],
+      { canApproveLeave: false },
+    ),
+  ),
+
+  defineRole(
+    'STAFF_ACCOUNTING',
+    'Nhân viên Kế toán',
+    forStaff([
+      ...grant('finance', 'create', 'dept'),
+      ...grant('finance', 'update', 'own'),
+      ...grant('finance', 'read', 'dept'),
+    ]),
+  ),
 
   // =====================================
-  // 4. SALES, CRM & MEDIA
+  // 4. PROCUREMENT & ASSETS
   // =====================================
-  {
-    slug: 'HEAD_SALES',
-    name: 'Trưởng phòng Kinh doanh / CSKH',
-    perms: [
-      'crm:*:dept',
-      'contract:*:dept',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'DEP_HEAD_SALES',
-    name: 'Phó phòng Kinh doanh / CSKH',
-    perms: [
-      'crm:create:dept',
-      'crm:update:dept',
-      'crm:read:dept',
-      'contract:create:dept',
-      'contract:update:dept',
-      'contract:read:dept',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'STAFF_SALES',
-    name: 'Nhân viên Kinh doanh & CSKH',
-    perms: [
-      'crm:create:own',
-      'crm:update:own',
-      'crm:read:dept',
-      'contract:create:own',
-      'contract:read:dept',
-      'document:read:dept',
-      'leave_request:create:own',
-      'task:*:own',
-      'meeting:read:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'HEAD_MEDIA',
-    name: 'Trưởng TT Truyền thông',
-    perms: [
-      'media:*:dept',
-      'crm:read:dept',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'DEP_HEAD_MEDIA',
-    name: 'Phó TT Truyền thông',
-    perms: [
-      'media:create:dept',
-      'media:update:dept',
-      'media:read:dept',
-      'crm:read:dept',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'STAFF_MEDIA',
-    name: 'Nhân viên Truyền thông',
-    perms: [
-      'media:create:own',
-      'media:update:own',
-      'media:read:dept',
-      'document:read:dept',
-      'leave_request:create:own',
-      'task:*:own',
-      'meeting:read:dept',
-      'policy:read:any',
-    ],
-  },
+  defineRole(
+    'HEAD_SUPPLY',
+    'Trưởng phòng Cung ứng',
+    forDeptHead(grant('supply', '*', 'dept'), [
+      ...grant('asset', 'update', 'any'),
+      ...grant('finance', 'read', 'own'),
+      ...grant('design', 'read', 'any'),
+      ...grant('estimation', 'read', 'any'),
+      ...grant('construction', 'read', 'any'),
+    ]),
+  ),
+
+  defineRole(
+    'DEP_HEAD_SUPPLY',
+    'Phó phòng Cung ứng',
+    forDeputyHead(grant('supply', ['create', 'update', 'read'], 'dept'), {
+      canApproveLeave: false,
+      extra: grant('asset', 'update', 'dept'),
+    }),
+  ),
+
+  defineRole(
+    'STAFF_SUPPLY',
+    'Nhân viên Cung ứng & Thủ kho',
+    forStaff([
+      ...grant('supply', ['create', 'update'], 'own'),
+      ...grant('supply', 'read', 'dept'),
+      ...grant('asset', 'update', 'dept'),
+      ...grant('asset', 'read', 'dept'),
+    ]),
+  ),
+
+  defineRole(
+    'HEAD_ASSET',
+    'Trưởng phòng Vật lực',
+    forDeptHead(grant('asset', '*', 'dept'), grant('supply', 'read', 'dept')),
+  ),
+
+  defineRole(
+    'DEP_HEAD_ASSET',
+    'Phó phòng Vật lực',
+    forDeputyHead(grant('asset', ['create', 'update', 'delete'], 'dept'), {
+      canApproveLeave: true,
+      extra: [
+        ...grant('supply', 'read', 'dept'),
+        ...grant('report', 'read', 'dept'),
+      ],
+    }),
+  ),
+
+  defineRole(
+    'OPERATOR',
+    'Khối Vận hành & Hậu cần',
+    grant('asset', ['read', 'update'], 'own'),
+    grant('hr', 'read', 'own'),
+    'leave_request:create:own',
+    'task:*:own',
+    'policy:read:any',
+  ),
 
   // =====================================
-  // 5. PRE-CONSTRUCTION (Design, MEP, Est)
+  // 5. SALES, CRM & MEDIA
   // =====================================
-  {
-    slug: 'DIR_DESIGN',
-    name: 'Giám đốc Khối Thiết kế',
-    perms: [
-      'design:*:dept',
-      'mep:read:any',
-      'estimation:read:any',
-      'construction:read:any',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'DEP_DIR_DESIGN',
-    name: 'Phó Giám đốc Khối Thiết kế',
-    perms: [
-      'design:create:dept',
-      'design:update:dept',
-      'design:read:dept',
-      'design:create:dept',
-      'mep:read:any',
-      'estimation:read:any',
-      'construction:read:any',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'HEAD_ARCHITECTURE',
-    name: 'Trưởng phòng Kiến trúc',
-    perms: [
-      'design:create:dept',
-      'design:update:dept',
-      'design:delete:dept',
-      'design:read:dept',
-      'mep:read:any',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'DEP_HEAD_ARCHITECTURE',
-    name: 'Phó phòng Kiến trúc',
-    perms: [
-      'design:create:dept',
-      'design:update:dept',
-      'design:delete:dept',
-      //   'design:read:dept',
-      'mep:read:any',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'STAFF_ARCHITECTURE',
-    name: 'Nhân viên Kiến trúc',
-    perms: [
-      'design:create:own',
-      'design:update:own',
-      'design:read:dept',
-      'mep:read:dept',
-      'document:create:own',
-      'document:read:dept',
-      'leave_request:create:own',
-      'task:*:own',
-      'meeting:read:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'STAFF_INTERIOR',
-    name: 'Nhân viên Thiết kế nội thất',
-    perms: [
-      'design:create:own',
-      'design:update:own',
-      'design:read:dept',
-      'document:create:own',
-      'document:read:dept',
-      'leave_request:create:own',
-      'task:*:own',
-      'meeting:read:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'HEAD_STRUCTURE',
-    name: 'Trưởng phòng Kết cấu',
-    perms: [
-      'design:create:dept',
-      'design:update:dept',
-      'design:read:dept',
-      'estimation:read:dept',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'DEP_HEAD_STRUCTURE',
-    name: 'Phó phòng Kết cấu',
-    perms: [
-      'design:create:dept',
-      'design:update:dept',
-      'design:read:dept',
-      'estimation:read:dept',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'STAFF_STRUCTURE',
-    name: 'Nhân viên Kết cấu',
-    perms: [
-      'design:create:own',
-      'design:update:own',
-      'design:read:dept',
-      'document:create:own',
-      'document:read:dept',
-      'leave_request:create:own',
-      'task:*:own',
-      'meeting:read:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'DIR_MEP',
-    name: 'Giám đốc Khối Cơ điện',
-    perms: [
-      'mep:*:dept',
-      'design:read:any',
-      'supply:read:any',
-      'construction:read:any',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'DEP_DIR_MEP',
-    name: 'Phó Giám đốc Khối Cơ điện',
-    perms: [
-      'mep:create:dept',
-      'mep:update:dept',
-      'mep:read:dept',
-      'design:read:any',
-      'supply:read:any',
-      'construction:read:any',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'STAFF_MEP',
-    name: 'Nhân viên Cơ điện',
-    perms: [
-      'mep:create:own',
-      'mep:update:own',
-      'mep:read:dept',
-      'design:read:dept',
-      'document:create:own',
-      'document:read:dept',
-      'leave_request:create:own',
-      'task:*:own',
-      'meeting:read:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'HEAD_ESTIMATION',
-    name: 'Trưởng phòng Dự toán',
-    perms: [
-      'estimation:*:dept',
-      'design:read:any',
-      'mep:read:any',
-      'construction:read:any',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'DEP_HEAD_ESTIMATION',
-    name: 'Phó phòng Dự toán',
-    perms: [
-      'estimation:create:dept',
-      'estimation:update:dept',
-      'estimation:read:dept',
-      'design:read:any',
-      'mep:read:any',
-      'construction:read:any',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'STAFF_ESTIMATION',
-    name: 'Nhân viên Dự toán',
-    perms: [
-      'estimation:create:own',
-      'estimation:update:own',
-      'estimation:read:dept',
-      'design:read:dept',
-      'mep:read:dept',
-      'document:create:own',
-      'document:read:dept',
-      'leave_request:create:own',
-      'task:*:own',
-      'meeting:read:dept',
-      'policy:read:any',
-    ],
-  },
+  defineRole(
+    'HEAD_SALES',
+    'Trưởng phòng Kinh doanh / CSKH',
+    forDeptHead([
+      ...grant('crm', '*', 'dept'),
+      ...grant('contract', '*', 'dept'),
+    ]),
+  ),
+
+  defineRole(
+    'DEP_HEAD_SALES',
+    'Phó phòng Kinh doanh / CSKH',
+    forDeputyHead(
+      [
+        ...grant('crm', ['create', 'update', 'read'], 'dept'),
+        ...grant('contract', ['create', 'update', 'read'], 'dept'),
+      ],
+      { canApproveLeave: true, extra: grant('report', 'read', 'dept') },
+    ),
+  ),
+
+  defineRole(
+    'STAFF_SALES',
+    'Nhân viên Kinh doanh & CSKH',
+    forStaff([
+      ...grant('crm', ['create', 'update'], 'own'),
+      ...grant('crm', 'read', 'dept'),
+      ...grant('contract', 'create', 'own'),
+      ...grant('contract', 'read', 'dept'),
+    ]),
+  ),
+
+  defineRole(
+    'HEAD_MEDIA',
+    'Trưởng TT Truyền thông',
+    forDeptHead(grant('media', '*', 'dept'), grant('crm', 'read', 'dept')),
+  ),
+
+  defineRole(
+    'DEP_HEAD_MEDIA',
+    'Phó TT Truyền thông',
+    forDeputyHead(grant('media', ['create', 'update', 'read'], 'dept'), {
+      canApproveLeave: true,
+      extra: [
+        ...grant('crm', 'read', 'dept'),
+        ...grant('report', 'read', 'dept'),
+      ],
+    }),
+  ),
+
+  defineRole(
+    'STAFF_MEDIA',
+    'Nhân viên Truyền thông',
+    forStaff([
+      ...grant('media', ['create', 'update'], 'own'),
+      ...grant('media', 'read', 'dept'),
+    ]),
+  ),
 
   // =====================================
-  // 6. CONSTRUCTION (Execution)
+  // 6. PRE-CONSTRUCTION (Design, MEP, Estimation)
   // =====================================
-  {
-    slug: 'DIR_CONSTRUCTION',
-    name: 'Giám đốc Khối Thi công',
-    perms: [
-      'construction:*:dept',
-      'design:read:any',
-      'mep:read:any',
-      'estimation:read:any',
-      'asset:read:any',
-      'finance:read:any',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'report:read:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'DEP_DIR_CONSTRUCTION',
-    name: 'Phó Giám đốc Khối Thi công',
-    perms: [
-      'construction:create:dept',
-      'construction:update:dept',
-      'construction:read:dept',
-      'design:read:dept',
-      'mep:read:dept',
-      'leave_request:approve:dept',
-      'document:*:dept',
-      'meeting:*:dept',
-      'task:*:dept',
-      'policy:read:any',
-    ],
-  },
-  {
-    slug: 'STAFF_SITE_ENGINEER',
-    name: 'Kỹ sư Xây dựng / Thi công',
-    perms: [
-      'construction:create:own',
-      'construction:update:own',
-      'construction:read:dept',
-      'design:read:dept',
-      'mep:read:dept',
-      'document:create:own',
-      'document:read:dept',
-      'leave_request:create:own',
-      'task:*:own',
-      'meeting:read:dept',
-      'policy:read:any',
-    ],
-  },
+  defineRole(
+    'DIR_DESIGN',
+    'Giám đốc Khối Thiết kế',
+    forDeptHead(grant('design', '*', 'dept'), [
+      ...grant('mep', 'read', 'any'),
+      ...grant('estimation', 'read', 'any'),
+      ...grant('construction', 'read', 'any'),
+    ]),
+  ),
+
+  defineRole(
+    'DEP_DIR_DESIGN',
+    'Phó Giám đốc Khối Thiết kế',
+    forDeputyHead(grant('design', ['create', 'update', 'read'], 'dept'), {
+      canApproveLeave: true,
+      extra: [
+        ...grant('mep', 'read', 'any'),
+        ...grant('estimation', 'read', 'any'),
+        ...grant('construction', 'read', 'any'),
+        ...grant('report', 'read', 'dept'),
+      ],
+    }),
+  ),
+
+  defineRole(
+    'HEAD_ARCHITECTURE',
+    'Trưởng phòng Kiến trúc',
+    forDeptHead(
+      grant('design', ['create', 'update', 'delete', 'read'], 'dept'),
+      grant('mep', 'read', 'any'),
+    ),
+  ),
+
+  defineRole(
+    'DEP_HEAD_ARCHITECTURE',
+    'Phó phòng Kiến trúc',
+    forDeputyHead(grant('design', ['create', 'update', 'delete'], 'dept'), {
+      canApproveLeave: true,
+      extra: grant('mep', 'read', 'any'),
+    }),
+  ),
+
+  defineRole(
+    'STAFF_ARCHITECTURE',
+    'Nhân viên Kiến trúc',
+    forStaff([
+      ...grant('design', ['create', 'update'], 'own'),
+      ...grant('design', 'read', 'dept'),
+      ...grant('mep', 'read', 'dept'),
+    ]),
+  ),
+
+  defineRole(
+    'STAFF_INTERIOR',
+    'Nhân viên Thiết kế nội thất',
+    forStaff([
+      ...grant('design', ['create', 'update'], 'own'),
+      ...grant('design', 'read', 'dept'),
+    ]),
+  ),
+
+  defineRole(
+    'HEAD_STRUCTURE',
+    'Trưởng phòng Kết cấu',
+    forDeptHead(
+      grant('design', ['create', 'update', 'read'], 'dept'),
+      grant('estimation', 'read', 'dept'),
+    ),
+  ),
+
+  defineRole(
+    'DEP_HEAD_STRUCTURE',
+    'Phó phòng Kết cấu',
+    forDeputyHead(grant('design', ['create', 'update', 'read'], 'dept'), {
+      canApproveLeave: true,
+      extra: grant('estimation', 'read', 'dept'),
+    }),
+  ),
+
+  defineRole(
+    'STAFF_STRUCTURE',
+    'Nhân viên Kết cấu',
+    forStaff([
+      ...grant('design', ['create', 'update'], 'own'),
+      ...grant('design', 'read', 'dept'),
+    ]),
+  ),
+
+  defineRole(
+    'DIR_MEP',
+    'Giám đốc Khối Cơ điện',
+    forDeptHead(grant('mep', '*', 'dept'), [
+      ...grant('design', 'read', 'any'),
+      ...grant('supply', 'read', 'any'),
+      ...grant('construction', 'read', 'any'),
+    ]),
+  ),
+
+  defineRole(
+    'DEP_DIR_MEP',
+    'Phó Giám đốc Khối Cơ điện',
+    forDeputyHead(grant('mep', ['create', 'update', 'read'], 'dept'), {
+      canApproveLeave: true,
+      extra: [
+        ...grant('design', 'read', 'any'),
+        ...grant('supply', 'read', 'any'),
+        ...grant('construction', 'read', 'any'),
+        ...grant('report', 'read', 'dept'),
+      ],
+    }),
+  ),
+
+  defineRole(
+    'STAFF_MEP',
+    'Nhân viên Cơ điện',
+    forStaff([
+      ...grant('mep', ['create', 'update'], 'own'),
+      ...grant('mep', 'read', 'dept'),
+      ...grant('design', 'read', 'dept'),
+    ]),
+  ),
+
+  defineRole(
+    'HEAD_ESTIMATION',
+    'Trưởng phòng Dự toán',
+    forDeptHead(grant('estimation', '*', 'dept'), [
+      ...grant('design', 'read', 'any'),
+      ...grant('mep', 'read', 'any'),
+      ...grant('construction', 'read', 'any'),
+    ]),
+  ),
+
+  defineRole(
+    'DEP_HEAD_ESTIMATION',
+    'Phó phòng Dự toán',
+    forDeputyHead(grant('estimation', ['create', 'update', 'read'], 'dept'), {
+      canApproveLeave: true,
+      extra: [
+        ...grant('design', 'read', 'any'),
+        ...grant('mep', 'read', 'any'),
+        ...grant('construction', 'read', 'any'),
+        ...grant('report', 'read', 'dept'),
+      ],
+    }),
+  ),
+
+  defineRole(
+    'STAFF_ESTIMATION',
+    'Nhân viên Dự toán',
+    forStaff([
+      ...grant('estimation', ['create', 'update'], 'own'),
+      ...grant('estimation', 'read', 'dept'),
+      ...grant('design', 'read', 'dept'),
+      ...grant('mep', 'read', 'dept'),
+    ]),
+  ),
 
   // =====================================
-  // 7. GUEST & ONBOARDING
+  // 7. CONSTRUCTION (Execution)
   // =====================================
-  {
-    slug: 'GUEST',
-    name: 'Khách / Chờ phân quyền',
-    perms: [
-      'news_feed:read:any', // Strictly limited to the dashboard news feed
-    ],
-  },
+  defineRole(
+    'DIR_CONSTRUCTION',
+    'Giám đốc Khối Thi công',
+    forDeptHead(grant('construction', '*', 'dept'), [
+      ...grant('design', 'read', 'any'),
+      ...grant('mep', 'read', 'any'),
+      ...grant('estimation', 'read', 'any'),
+      ...grant('asset', 'read', 'any'),
+      ...grant('finance', 'read', 'any'),
+    ]),
+  ),
+
+  defineRole(
+    'DEP_DIR_CONSTRUCTION',
+    'Phó Giám đốc Khối Thi công',
+    forDeputyHead(grant('construction', ['create', 'update', 'read'], 'dept'), {
+      canApproveLeave: true,
+      extra: [
+        ...grant('design', 'read', 'dept'),
+        ...grant('mep', 'read', 'dept'),
+      ],
+    }),
+  ),
+
+  defineRole(
+    'STAFF_SITE_ENGINEER',
+    'Kỹ sư Xây dựng / Thi công',
+    forStaff([
+      ...grant('construction', ['create', 'update'], 'own'),
+      ...grant('construction', 'read', 'dept'),
+      ...grant('design', 'read', 'dept'),
+      ...grant('mep', 'read', 'dept'),
+    ]),
+  ),
+
+  // =====================================
+  // 8. GUEST / ONBOARDING
+  // =====================================
+  defineRole('GUEST', 'Khách / Chờ phân quyền', 'news_feed:read:any'),
 ];
