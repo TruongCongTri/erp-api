@@ -1,21 +1,14 @@
 # ==========================================
 # STAGE 1: BUILDER
 # ==========================================
-# Use Alpine Linux for a minimal footprint
 FROM node:22-alpine AS builder
 
 WORKDIR /usr/src/app
 
-# Copy package files first to leverage Docker layer caching
 COPY package*.json ./
-
-# Install ALL dependencies (including devDependencies needed for build)
 RUN npm ci
 
-# Copy the rest of the application code
 COPY . .
-
-# Compile the NestJS application from TypeScript to JavaScript
 RUN npm run build
 
 # ==========================================
@@ -26,8 +19,6 @@ FROM node:22-alpine AS deps
 WORKDIR /usr/src/app
 
 COPY package*.json ./
-
-# Install ONLY production dependencies to keep the image lightweight
 RUN npm ci --omit=dev
 
 # ==========================================
@@ -37,20 +28,24 @@ FROM node:22-alpine AS production
 
 WORKDIR /usr/src/app
 
-# Enforce production environment optimizations across Node.js
 ENV NODE_ENV=production
 
-# Security: Switch from root to the unprivileged 'node' user provided by the image
+# (Optional) If your app uses Puppeteer for PDF/export generation on Alpine:
+# RUN apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont
+# ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+#     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
 USER node
 
-# Copy only the compiled artifacts and production dependencies
-# The --chown flag ensures the node user has correct permissions
+# Copy production dependencies and build output
 COPY --chown=node:node --from=deps /usr/src/app/node_modules ./node_modules
 COPY --chown=node:node --from=builder /usr/src/app/dist ./dist
 COPY --chown=node:node package.json ./
 
-# Expose the standard NestJS port
+# CRITICAL FOR TSCONFIG-PATHS:
+# tsconfig-paths/register reads tsconfig.json at runtime to map your path aliases
+COPY --chown=node:node tsconfig.json ./
+
 EXPOSE 3000
 
-# Start the application using raw Node.js (bypassing npm for faster startup and better signal handling)
 CMD ["node", "dist/main.js"]
