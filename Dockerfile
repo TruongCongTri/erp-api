@@ -2,7 +2,7 @@
 # STAGE 1: BUILDER
 # ==========================================
 # Use Alpine Linux for a minimal footprint
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /usr/src/app
 
@@ -21,7 +21,7 @@ RUN npm run build
 # ==========================================
 # STAGE 2: PRODUCTION DEPENDENCIES
 # ==========================================
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 
 WORKDIR /usr/src/app
 
@@ -33,7 +33,7 @@ RUN npm ci --omit=dev
 # ==========================================
 # STAGE 3: PRODUCTION RUNTIME
 # ==========================================
-FROM node:20-alpine AS production
+FROM node:22-alpine AS production
 
 WORKDIR /usr/src/app
 

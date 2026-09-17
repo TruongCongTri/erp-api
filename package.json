@@ -77,7 +77,8 @@
     "slugify": "^1.6.9",
     "socket.io": "^4.8.3",
     "typeorm": "^1.1.0",
-    "vietnam-administrative-address": "^0.4.1"
+    "vietnam-administrative-address": "^0.4.1",
+    "tsconfig-paths": "^4.2.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
