@@ -1,4 +1,4 @@
-import { plainToInstance } from 'class-transformer';
+import { plainToInstance, Transform } from 'class-transformer';
 import {
   IsString,
   IsNumber,
@@ -29,7 +29,7 @@ export class EnvironmentVariables {
   DATABASE_PORT!: number;
 
   @IsString()
-  DATABASE_USERNAME!: string;
+  DATABASE_USER!: string;
 
   @IsString()
   DATABASE_PASSWORD!: string;
@@ -37,8 +37,10 @@ export class EnvironmentVariables {
   @IsString()
   DATABASE_NAME!: string;
 
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true || value === '1')
   @IsBoolean()
-  DATABASE_SSL!: boolean;
+  DATABASE_SSL?: boolean;
 
   // Redis
   @IsString()

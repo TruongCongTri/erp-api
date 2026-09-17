@@ -66,6 +66,7 @@
 
 // online - Supabase
 // import 'tsconfig-paths/register';
+import 'tsconfig-paths/register';
 import { DataSource, DataSourceOptions } from 'typeorm';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
@@ -73,7 +74,7 @@ import { config } from 'dotenv';
 import * as fs from 'fs';
 import * as path from 'path';
 
-// 1. Ensure TypeORM CLI loads the same env files as NestJS
+// 1. Ensure env files load properly outside NestJS
 const envFiles = ['.env.development.local', '.env.local', '.env'];
 for (const file of envFiles) {
   const envPath = path.resolve(process.cwd(), file);
@@ -108,9 +109,14 @@ const buildConnectionOptions = (
   database = 'postgres',
   isSslEnabled = true,
 ): ConnectionOptions => {
-  const sslConfig = isSslEnabled ? { rejectUnauthorized: false } : false;
+  // Always force SSL if connecting to Supabase cloud
+  const isSupabase =
+    (host && host.includes('supabase.com')) ||
+    (databaseUrl && databaseUrl.includes('supabase.com'));
 
-  // Supabase connection pooling (Session mode on port 5432 recommended)
+  const shouldUseSsl = isSupabase || isSslEnabled;
+  const sslConfig = shouldUseSsl ? { rejectUnauthorized: false } : false;
+
   const poolConfig = {
     max: 15,
     connectionTimeoutMillis: 10000,
@@ -137,26 +143,56 @@ const buildConnectionOptions = (
   };
 };
 
+const parseBoolean = (val: unknown, fallback = true): boolean => {
+  if (val === undefined || val === null || val === '') return fallback;
+  if (typeof val === 'boolean') return val;
+  return (
+    // eslint-disable-next-line @typescript-eslint/no-base-to-string
+    String(val).trim().toLowerCase() === 'true' || String(val).trim() === '1'
+  );
+};
+
 // 2. Factory for NestJS runtime (app.module.ts)
 export const typeOrmConfigFactory = (
   configService: ConfigService,
 ): TypeOrmModuleOptions => {
-  const databaseUrl = configService.get<string>('DATABASE_URL');
-  const sslEnabled =
-    configService.get<string>('DATABASE_SSL', 'true') === 'true';
+  const databaseUrl =
+    configService.get<string>('DATABASE_URL') || process.env.DATABASE_URL;
 
-  // Support both DATABASE_USERNAME and DATABASE_USER to avoid schema mismatch
+  // Handles boolean true, string 'true', or number 1 from validateEnv
+  const sslEnabled = parseBoolean(
+    configService.get('DATABASE_SSL') ?? process.env.DATABASE_SSL,
+    true, // default to true for remote Supabase
+  );
+
+  const host =
+    configService.get<string>('DATABASE_HOST') ||
+    process.env.DATABASE_HOST ||
+    'localhost';
+  const port = Number(
+    configService.get<number>('DATABASE_PORT') ||
+      process.env.DATABASE_PORT ||
+      5432,
+  );
   const username =
-    configService.get<string>('DATABASE_USERNAME') ||
-    configService.get<string>('DATABASE_USER');
+    configService.get<string>('DATABASE_USER') ||
+    process.env.DATABASE_USER ||
+    'postgres';
+  const password =
+    configService.get<string>('DATABASE_PASSWORD') ||
+    process.env.DATABASE_PASSWORD;
+  const database =
+    configService.get<string>('DATABASE_NAME') ||
+    process.env.DATABASE_NAME ||
+    'postgres';
 
   const connectionProps = buildConnectionOptions(
     databaseUrl,
-    configService.get<string>('DATABASE_HOST'),
-    configService.get<number>('DATABASE_PORT', 5432),
+    host,
+    port,
     username,
-    configService.get<string>('DATABASE_PASSWORD'),
-    configService.get<string>('DATABASE_NAME', 'postgres'),
+    password,
+    database,
     sslEnabled,
   );
 
@@ -175,15 +211,13 @@ export const typeOrmConfigFactory = (
 };
 
 // 3. CLI DataSource configuration for running migrations
-const cliSslEnabled = process.env.DATABASE_SSL !== 'false';
-
-const cliUsername = process.env.DATABASE_USERNAME || process.env.DATABASE_USER;
+const cliSslEnabled = parseBoolean(process.env.DATABASE_SSL, true);
 
 const cliConnectionProps = buildConnectionOptions(
   process.env.DATABASE_URL,
   process.env.DATABASE_HOST,
   parseInt(process.env.DATABASE_PORT || '5432', 10),
-  cliUsername,
+  process.env.DATABASE_USER,
   process.env.DATABASE_PASSWORD,
   process.env.DATABASE_NAME || 'postgres',
   cliSslEnabled,
