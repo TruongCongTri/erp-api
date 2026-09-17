@@ -1,0 +1,25 @@
+export enum FacebookAccountStatus {
+  HEALTHY = 'HEALTHY',
+  CHECKPOINT_BLOCKED = 'CHECKPOINT_BLOCKED',
+  COOKIES_EXPIRED = 'COOKIES_EXPIRED',
+}
+
+export enum GroupMembershipStatus {
+  ACTIVE_MEMBER = 'ACTIVE_MEMBER',
+  PENDING_APPROVAL = 'PENDING_APPROVAL',
+  NOT_JOINED = 'NOT_JOINED',
+}
+
+export enum AutomationPlatform {
+  FACEBOOK_GROUP = 'FACEBOOK_GROUP',
+  TOPCV = 'TOPCV',
+  CAREERVIET = 'CAREERVIET',
+}
+
+export enum AutomationJobStatus {
+  PENDING = 'PENDING',
+  PROCESSING = 'PROCESSING',
+  SUCCESS = 'SUCCESS',
+  FAILED = 'FAILED',
+  CHECKPOINT_BLOCKED = 'CHECKPOINT_BLOCKED',
+}

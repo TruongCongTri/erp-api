@@ -25,7 +25,7 @@ import { RequireAnyPermissions } from 'src/common/decorators/require-any-permiss
 import { AuditInterceptor } from 'src/audit-log/audit.interceptor';
 import { AuditAction } from 'src/audit-log/audit-action.decorator';
 import { AuditActionType } from 'src/audit-log/audit-log.types';
-import { PlatformSource } from './enums/ats.enum';
+import { PlatformSource, CvStorageLocation } from './enums/ats.enum';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue, randomUUID } from 'bullmq';
 import { CvUploadJobData } from './cv-upload.processor';
@@ -116,7 +116,12 @@ export class CandidateSubmissionsController {
   // ==========================================
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @UseInterceptors(FileInterceptor('cvFile', cvMulterOptions), AuditInterceptor)
-  @RequireAnyPermissions('ats:candidates:create', 'ats:candidates:manage')
+  @RequireAnyPermissions(
+    'ats_candidate:create:any',
+    'ats_candidate:manage:any',
+    'ats:candidates:create',
+    'ats:candidates:manage',
+  )
   @Post('manual')
   @AuditAction({
     actionType: AuditActionType.CREATE,
@@ -133,6 +138,7 @@ export class CandidateSubmissionsController {
     );
 
     // 1. Đính kèm trực tiếp file qua Postman / Form-data -> Upload lên AWS S3
+    let cvStorageLocation: CvStorageLocation | undefined;
     if (file) {
       const s3Result = await this.s3StorageService.uploadCvStream(
         file.buffer,
@@ -141,6 +147,7 @@ export class CandidateSubmissionsController {
       );
       dto.cvFileKey = s3Result.fileKey;
       dto.cvUrl = s3Result.fileUrl;
+      cvStorageLocation = s3Result.storageLocation;
     }
     // 2. Nếu client truyền cvFileKey sẵn có mà không gửi file đính kèm
     else if (dto.cvFileKey && (!dto.cvUrl || dto.cvUrl.trim() === '')) {
@@ -153,7 +160,10 @@ export class CandidateSubmissionsController {
       );
     }
 
-    const result = await this.submissionsService.ingest(dto);
+    const result = await this.submissionsService.ingest({
+      ...dto,
+      cvStorageLocation,
+    });
 
     return {
       success: true,

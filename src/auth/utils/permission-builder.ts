@@ -61,6 +61,7 @@ export const ATS_VIEWER_PERMS: string[] = [
   'ats_requisition:read:any',
   'ats_job_post:read:any',
   'ats_candidate:read:any',
+  'publishing_automation:read:any',
 ];
 
 /** Gói hành chính chuẩn của mọi Trưởng phòng */

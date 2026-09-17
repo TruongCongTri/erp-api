@@ -10,7 +10,11 @@ import {
   Matches,
 } from 'class-validator';
 import { BaseQueryDto } from 'src/common/dto/base-query.dto';
-import { ApplicationPhase, PlatformSource } from '../enums/ats.enum';
+import {
+  ApplicationPhase,
+  PlatformSource,
+  CvStorageLocation,
+} from '../enums/ats.enum';
 
 // ── Profile Identity Core ──
 export class CandidateIdentityDto {
@@ -52,6 +56,12 @@ export class IngestCandidateSubmissionDto extends CandidateIdentityDto {
   @IsOptional()
   @IsString()
   cvFileKey?: string;
+
+  // Nội bộ: nơi tệp CV thực sự đang lưu (S3 hoặc tạm trên đĩa cục bộ chờ upload lại).
+  // Do server tự gán sau khi upload, không nhận trực tiếp từ client.
+  @IsOptional()
+  @IsEnum(CvStorageLocation)
+  cvStorageLocation?: CvStorageLocation;
 
   @IsEnum(PlatformSource, { message: 'Nguồn tiếp nhận hồ sơ không hợp lệ' })
   platformSource!: PlatformSource;

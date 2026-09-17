@@ -1,4 +1,15 @@
-export const employeeRoster = [
+export interface EmployeeRosterItem {
+  employeeCode: string;
+  fullName: string;
+  jobTitle: string;
+  roleSlug: string;
+  email: string;
+  department: string;
+  company?: string;
+}
+
+export const employeeRoster: EmployeeRosterItem[] = [
+  // ─── TÀI KHOẢN HỆ THỐNG / SEED ACCOUNTS ──────────────────────────────
   {
     employeeCode: 'A00-000',
     fullName: 'Super Admin Name',
@@ -6,6 +17,7 @@ export const employeeRoster = [
     roleSlug: 'SUPER_ADMIN',
     email: 'superadmin@chinhnam.vn',
     department: 'Ban Giám đốc',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'A00-001',
@@ -13,7 +25,8 @@ export const employeeRoster = [
     jobTitle: 'Super HR Job Title',
     roleSlug: 'DIR_HR_ADMIN',
     email: 'superhr@chinhnam.vn',
-    department: 'Hành Chính Nhân Sự',
+    department: 'Hành chính Nhân sự',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'A00-002',
@@ -21,9 +34,12 @@ export const employeeRoster = [
     jobTitle: 'Staff HR Job Title',
     roleSlug: 'STAFF_HR',
     email: 'staffhr@chinhnam.vn',
-    department: 'Hành Chính Nhân Sự',
+    department: 'Hành chính Nhân sự',
+    company: 'Chính Nam',
   },
-  //
+
+  // ─── CÔNG TY CỔ PHẦN THIẾT KẾ XÂY DỰNG CHÍNH NAM (80 NHÂN SỰ) ───────
+  // 1. BAN TỔNG GIÁM ĐỐC & TRỢ LÝ
   {
     employeeCode: 'A12-001',
     fullName: 'Trần Quang Huấn',
@@ -31,6 +47,7 @@ export const employeeRoster = [
     roleSlug: 'EXEC_CEO',
     email: 'tranquanghuan@chinhnam.vn',
     department: 'Ban Giám đốc',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'A12-002',
@@ -39,6 +56,7 @@ export const employeeRoster = [
     roleSlug: 'DEP_EXEC_DIRECTOR',
     email: 'duongthituong@chinhnam.vn',
     department: 'Ban Giám đốc',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'A12-003',
@@ -47,6 +65,7 @@ export const employeeRoster = [
     roleSlug: 'DEP_EXEC_DIRECTOR',
     email: 'duongvantruong@chinhnam.vn',
     department: 'Ban Giám đốc',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2608',
@@ -55,6 +74,7 @@ export const employeeRoster = [
     roleSlug: 'DEP_EXEC_DIRECTOR',
     email: 'lamvanduc@chinhnam.vn',
     department: 'Ban Giám đốc',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'D18-003',
@@ -63,6 +83,7 @@ export const employeeRoster = [
     roleSlug: 'EXEC_ASSISTANT',
     email: 'truongthithanhhang@chinhnam.vn',
     department: 'Ban Giám đốc',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2540',
@@ -71,7 +92,10 @@ export const employeeRoster = [
     roleSlug: 'EXEC_ASSISTANT_DESIGN',
     email: 'nguyenkyduyen@chinhnam.vn',
     department: 'Ban Giám đốc',
+    company: 'Chính Nam',
   },
+
+  // 2. PHÒNG HÀNH CHÍNH NHÂN SỰ & IT - HỆ THỐNG
   {
     employeeCode: 'CN-XD.2609',
     fullName: 'Đỗ Thiên Lạc',
@@ -79,6 +103,7 @@ export const employeeRoster = [
     roleSlug: 'DIR_HR',
     email: 'dothienlac@chinhnam.vn',
     department: 'Hành chính Nhân sự',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2502',
@@ -87,6 +112,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_HR',
     email: 'tranthithuhien@chinhnam.vn',
     department: 'Hành chính Nhân sự',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2503',
@@ -95,6 +121,7 @@ export const employeeRoster = [
     roleSlug: 'SYSTEM_ADMIN',
     email: 'trantanthanh@chinhnam.vn',
     department: 'IT & Hệ thống',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2537',
@@ -103,6 +130,7 @@ export const employeeRoster = [
     roleSlug: 'SYSTEM_ADMIN',
     email: 'bilonghongphuc@chinhnam.vn',
     department: 'IT & Hệ thống',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2625',
@@ -111,7 +139,10 @@ export const employeeRoster = [
     roleSlug: 'SYSTEM_ADMIN',
     email: 'truongcongtri@chinhnam.vn',
     department: 'IT & Hệ thống',
+    company: 'Chính Nam',
   },
+
+  // 3. HẬU CẦN & VẬN HÀNH
   {
     employeeCode: 'F23-011',
     fullName: 'Vũ Thúy Quỳnh',
@@ -119,6 +150,7 @@ export const employeeRoster = [
     roleSlug: 'OPERATOR',
     email: 'vuthuyquynh@chinhnam.vn',
     department: 'Vận hành & Hậu cần',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2544',
@@ -127,183 +159,10 @@ export const employeeRoster = [
     roleSlug: 'OPERATOR',
     email: 'nguyencongchinh@chinhnam.vn',
     department: 'Vận hành & Hậu cần',
+    company: 'Chính Nam',
   },
-  {
-    employeeCode: 'D17-004',
-    fullName: 'Trần Quang Hùng',
-    jobTitle: 'Trưởng phòng Vật lực',
-    roleSlug: 'HEAD_ASSET',
-    email: 'tranquanghung@chinhnam.vn',
-    department: 'Phòng Vật lực',
-  },
-  {
-    employeeCode: 'F24-008',
-    fullName: 'Huỳnh Thiên Vũ',
-    jobTitle: 'Tài xế xe cẩu',
-    roleSlug: 'OPERATOR',
-    email: 'huynhthienvu@chinhnam.vn',
-    department: 'Vận hành & Hậu cần',
-  },
-  {
-    employeeCode: 'CN-XD.2520',
-    fullName: 'Đặng Vũ Khiêm',
-    jobTitle: 'Tài xế xe tải 1.9 tấn',
-    roleSlug: 'OPERATOR',
-    email: 'dangvukhiem@chinhnam.vn',
-    department: 'Vận hành & Hậu cần',
-  },
-  {
-    employeeCode: 'CN-XD.2614',
-    fullName: 'Đặng Lê Hữu',
-    jobTitle: 'Nhân viên kho',
-    roleSlug: 'OPERATOR',
-    email: 'danglehuu@chinhnam.vn',
-    department: 'Vận hành & Hậu cần',
-  },
-  {
-    employeeCode: 'CN-XD.2616',
-    fullName: 'Lê Thế Hòa',
-    jobTitle: 'Tài xế xe cuốc 5.5 tấn',
-    roleSlug: 'OPERATOR',
-    email: 'lethehoa@chinhnam.vn',
-    department: 'Vận hành & Hậu cần',
-  },
-  {
-    employeeCode: 'D17-003',
-    fullName: 'Ma Thị Chi',
-    jobTitle: 'Trưởng phòng Cung ứng',
-    roleSlug: 'HEAD_SUPPLY',
-    email: 'mathichi@chinhnam.vn',
-    department: 'Phòng Cung ứng',
-  },
-  {
-    employeeCode: 'E22-002',
-    fullName: 'Đỗ Thị Lý',
-    jobTitle: 'Phó phòng Cung ứng',
-    roleSlug: 'DEP_HEAD_SUPPLY',
-    email: 'dothily@chinhnam.vn',
-    department: 'Phòng Cung ứng',
-  },
-  {
-    employeeCode: 'E24-003',
-    fullName: 'Nguyễn Tiến Đạt',
-    jobTitle: 'Nhân viên Cung ứng',
-    roleSlug: 'STAFF_SUPPLY',
-    email: 'nguyentiendat@chinhnam.vn',
-    department: 'Phòng Cung ứng',
-  },
-  {
-    employeeCode: 'CN-XD.2516',
-    fullName: 'Trần Thị Tuyết Thanh',
-    jobTitle: 'Nhân viên Cung ứng',
-    roleSlug: 'STAFF_SUPPLY',
-    email: 'tranthituyetthanh@chinhnam.vn',
-    department: 'Phòng Cung ứng',
-  },
-  {
-    employeeCode: 'CN-XD.2413',
-    fullName: 'Nguyễn Thị Thu Trang',
-    jobTitle: 'Nhân viên Thủ kho',
-    roleSlug: 'STAFF_SUPPLY',
-    email: 'nguyenthithutrang@chinhnam.vn',
-    department: 'Phòng Cung ứng',
-  },
-  {
-    employeeCode: 'CN-XD.2525',
-    fullName: 'Nguyễn Thị Như Quỳnh',
-    jobTitle: 'Nhân viên Cung ứng',
-    roleSlug: 'STAFF_SUPPLY',
-    email: 'nguyenthinhuquynh@chinhnam.vn',
-    department: 'Phòng Cung ứng',
-  },
-  {
-    employeeCode: 'D17-002',
-    fullName: 'Trần Thị Tuyết',
-    jobTitle: 'Trưởng phòng CSKH',
-    roleSlug: 'HEAD_SALES',
-    email: 'tranthituyet@chinhnam.vn',
-    department: 'Kinh doanh & CSKH',
-  },
-  {
-    employeeCode: 'E23-022',
-    fullName: 'Nguyễn Thị Tâm',
-    jobTitle: 'Nhân viên CSKH',
-    roleSlug: 'STAFF_SALES',
-    email: 'nguyenthitam@chinhnam.vn',
-    department: 'Kinh doanh & CSKH',
-  },
-  {
-    employeeCode: 'CN-XD.2534',
-    fullName: 'Nguyễn Văn Sơn',
-    jobTitle: 'Nhân viên tư vấn khách hàng',
-    roleSlug: 'STAFF_SALES',
-    email: 'nguyenvanson@chinhnam.vn',
-    department: 'Kinh doanh & CSKH',
-  },
-  {
-    employeeCode: 'CN-XD.2547',
-    fullName: 'Lê Quang Tiến Sĩ',
-    jobTitle: 'Nhân viên tư vấn khách hàng',
-    roleSlug: 'STAFF_SALES',
-    email: 'lequangtiensi@chinhnam.vn',
-    department: 'Kinh doanh & CSKH',
-  },
-  {
-    employeeCode: 'E23-001',
-    fullName: 'Dương Quang Nam',
-    jobTitle: 'Nhân viên tư vấn khách hàng',
-    roleSlug: 'STAFF_SALES',
-    email: 'duongquangnam@chinhnam.vn',
-    department: 'Kinh doanh & CSKH',
-  },
-  {
-    employeeCode: 'CN-XD.2619',
-    fullName: 'Phan Ngọc Thảo Trinh',
-    jobTitle: 'Nhân viên lễ tân văn phòng (VP HCM)',
-    roleSlug: 'STAFF_SALES',
-    email: 'phanngocthaotrinh@chinhnam.vn',
-    department: 'Kinh doanh & CSKH',
-  },
-  {
-    employeeCode: 'E23-003',
-    fullName: 'Trương Gia Bảo',
-    jobTitle: 'Phó trung tâm truyền thông',
-    roleSlug: 'DEP_HEAD_MEDIA',
-    email: 'truonggiabao@chinhnam.vn',
-    department: 'Trung tâm Truyền thông',
-  },
-  {
-    employeeCode: 'E21-010',
-    fullName: 'Nguyễn Thị Thanh Huyền',
-    jobTitle: 'Nhân viên truyền thông',
-    roleSlug: 'STAFF_MEDIA',
-    email: 'nguyenthithanhhuyen@chinhnam.vn',
-    department: 'Trung tâm Truyền thông',
-  },
-  {
-    employeeCode: 'E24-009',
-    fullName: 'Nguyễn Minh Anh',
-    jobTitle: 'Nhân viên truyền thông',
-    roleSlug: 'STAFF_MEDIA',
-    email: 'nguyenminhanh@chinhnam.vn',
-    department: 'Trung tâm Truyền thông',
-  },
-  {
-    employeeCode: 'E24-012',
-    fullName: 'Châu Văn Cường',
-    jobTitle: 'Nhân viên truyền thông',
-    roleSlug: 'STAFF_MEDIA',
-    email: 'chauvancuong@chinhnam.vn',
-    department: 'Trung tâm Truyền thông',
-  },
-  {
-    employeeCode: 'E24-013',
-    fullName: 'Phạm Tấn Thịnh',
-    jobTitle: 'Nhân viên truyền thông',
-    roleSlug: 'STAFF_MEDIA',
-    email: 'phamtanthinh@chinhnam.vn',
-    department: 'Trung tâm Truyền thông',
-  },
+
+  // 4. PHÒNG TÀI CHÍNH KẾ TOÁN
   {
     employeeCode: 'D17-005',
     fullName: 'Bùi Thúy An',
@@ -311,6 +170,7 @@ export const employeeRoster = [
     roleSlug: 'DIR_FINANCE',
     email: 'buithuyan@chinhnam.vn',
     department: 'Tài chính Kế toán',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'C21-009',
@@ -319,6 +179,7 @@ export const employeeRoster = [
     roleSlug: 'DEP_HEAD_FINANCE',
     email: 'nguyenthihoa@chinhnam.vn',
     department: 'Tài chính Kế toán',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E21-004',
@@ -327,6 +188,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_FINANCE',
     email: 'nguyenthibaotran@chinhnam.vn',
     department: 'Tài chính Kế toán',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2406',
@@ -335,7 +197,169 @@ export const employeeRoster = [
     roleSlug: 'STAFF_FINANCE',
     email: 'thieuthingocthao@chinhnam.vn',
     department: 'Tài chính Kế toán',
+    company: 'Chính Nam',
   },
+
+  // 5. PHÒNG CUNG ỨNG
+  {
+    employeeCode: 'D17-003',
+    fullName: 'Ma Thị Chi',
+    jobTitle: 'Trưởng phòng Cung ứng',
+    roleSlug: 'HEAD_SUPPLY',
+    email: 'mathichi@chinhnam.vn',
+    department: 'Phòng Cung ứng',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'E22-002',
+    fullName: 'Đỗ Thị Lý',
+    jobTitle: 'Phó phòng Cung ứng',
+    roleSlug: 'DEP_HEAD_SUPPLY',
+    email: 'dothily@chinhnam.vn',
+    department: 'Phòng Cung ứng',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'E24-003',
+    fullName: 'Nguyễn Tiến Đạt',
+    jobTitle: 'Nhân viên Cung ứng',
+    roleSlug: 'STAFF_SUPPLY',
+    email: 'nguyentiendat@chinhnam.vn',
+    department: 'Phòng Cung ứng',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'CN-XD.2516',
+    fullName: 'Trần Thị Tuyết Thanh',
+    jobTitle: 'Nhân viên Cung ứng',
+    roleSlug: 'STAFF_SUPPLY',
+    email: 'tranthituyetthanh@chinhnam.vn',
+    department: 'Phòng Cung ứng',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'CN-XD.2413',
+    fullName: 'Nguyễn Thị Thu Trang',
+    jobTitle: 'Nhân viên Thủ kho',
+    roleSlug: 'STAFF_SUPPLY',
+    email: 'nguyenthithutrang@chinhnam.vn',
+    department: 'Phòng Cung ứng',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'CN-XD.2525',
+    fullName: 'Nguyễn Thị Như Quỳnh',
+    jobTitle: 'Nhân viên Cung ứng',
+    roleSlug: 'STAFF_SUPPLY',
+    email: 'nguyenthinhuquynh@chinhnam.vn',
+    department: 'Phòng Cung ứng',
+    company: 'Chính Nam',
+  },
+
+  // 6. PHÒNG CHĂM SÓC KHÁCH HÀNG / KINH DOANH
+  {
+    employeeCode: 'D17-002',
+    fullName: 'Trần Thị Tuyết',
+    jobTitle: 'Trưởng phòng CSKH',
+    roleSlug: 'HEAD_SALES',
+    email: 'tranthituyet@chinhnam.vn',
+    department: 'Kinh doanh & CSKH',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'E23-022',
+    fullName: 'Nguyễn Thị Tâm',
+    jobTitle: 'Nhân viên CSKH',
+    roleSlug: 'STAFF_SALES',
+    email: 'nguyenthitam@chinhnam.vn',
+    department: 'Kinh doanh & CSKH',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'CN-XD.2534',
+    fullName: 'Nguyễn Văn Sơn',
+    jobTitle: 'Nhân viên tư vấn khách hàng',
+    roleSlug: 'STAFF_SALES',
+    email: 'nguyenvanson@chinhnam.vn',
+    department: 'Kinh doanh & CSKH',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'CN-XD.2547',
+    fullName: 'Lê Quang Tiến Sĩ',
+    jobTitle: 'Nhân viên tư vấn khách hàng',
+    roleSlug: 'STAFF_SALES',
+    email: 'lequangtiensi@chinhnam.vn',
+    department: 'Kinh doanh & CSKH',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'E23-001',
+    fullName: 'Dương Quang Nam',
+    jobTitle: 'Nhân viên tư vấn khách hàng',
+    roleSlug: 'STAFF_SALES',
+    email: 'duongquangnam@chinhnam.vn',
+    department: 'Kinh doanh & CSKH',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'CN-XD.2619',
+    fullName: 'Phan Ngọc Thảo Trinh',
+    jobTitle: 'Nhân viên lễ tân văn phòng (VP HCM)',
+    roleSlug: 'STAFF_SALES',
+    email: 'phanngocthaotrinh@chinhnam.vn',
+    department: 'Kinh doanh & CSKH',
+    company: 'Chính Nam',
+  },
+
+  // 7. TRUNG TÂM TRUYỀN THÔNG
+  {
+    employeeCode: 'E23-003',
+    fullName: 'Trương Gia Bảo',
+    jobTitle: 'Phó trung tâm truyền thông',
+    roleSlug: 'DEP_HEAD_MEDIA',
+    email: 'truonggiabao@chinhnam.vn',
+    department: 'Trung tâm Truyền thông',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'E21-010',
+    fullName: 'Nguyễn Thị Thanh Huyền',
+    jobTitle: 'Nhân viên truyền thông',
+    roleSlug: 'STAFF_MEDIA',
+    email: 'nguyenthithanhhuyen@chinhnam.vn',
+    department: 'Trung tâm Truyền thông',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'E24-009',
+    fullName: 'Nguyễn Minh Anh',
+    jobTitle: 'Nhân viên truyền thông',
+    roleSlug: 'STAFF_MEDIA',
+    email: 'nguyenminhanh@chinhnam.vn',
+    department: 'Trung tâm Truyền thông',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'E24-012',
+    fullName: 'Châu Văn Cường',
+    jobTitle: 'Nhân viên truyền thông',
+    roleSlug: 'STAFF_MEDIA',
+    email: 'chauvancuong@chinhnam.vn',
+    department: 'Trung tâm Truyền thông',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'E24-013',
+    fullName: 'Phạm Tấn Thịnh',
+    jobTitle: 'Nhân viên truyền thông',
+    roleSlug: 'STAFF_MEDIA',
+    email: 'phamtanthinh@chinhnam.vn',
+    department: 'Trung tâm Truyền thông',
+    company: 'Chính Nam',
+  },
+
+  // 8. PHÒNG DỰ TOÁN
   {
     employeeCode: 'D18-005',
     fullName: 'Lê Thị Hằng',
@@ -343,6 +367,7 @@ export const employeeRoster = [
     roleSlug: 'HEAD_ESTIMATION',
     email: 'lethihang@chinhnam.vn',
     department: 'Phòng Dự toán',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2519',
@@ -351,6 +376,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_ESTIMATION',
     email: 'nguyenminhquang@chinhnam.vn',
     department: 'Phòng Dự toán',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2536',
@@ -359,6 +385,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_ESTIMATION',
     email: 'ngoquocthang@chinhnam.vn',
     department: 'Phòng Dự toán',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2601',
@@ -367,7 +394,57 @@ export const employeeRoster = [
     roleSlug: 'STAFF_ESTIMATION',
     email: 'truongthihoa@chinhnam.vn',
     department: 'Phòng Dự toán',
+    company: 'Chính Nam',
   },
+
+  // 9. PHÒNG VẬT LỰC & THIẾT BỊ
+  {
+    employeeCode: 'D17-004',
+    fullName: 'Trần Quang Hùng',
+    jobTitle: 'Trưởng phòng Vật lực',
+    roleSlug: 'HEAD_ASSET',
+    email: 'tranquanghung@chinhnam.vn',
+    department: 'Phòng Vật lực',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'F24-008',
+    fullName: 'Huỳnh Thiên Vũ',
+    jobTitle: 'Tài xế xe cẩu',
+    roleSlug: 'OPERATOR',
+    email: 'huynhthienvu@chinhnam.vn',
+    department: 'Phòng Vật lực',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'CN-XD.2520',
+    fullName: 'Đặng Vũ Khiêm',
+    jobTitle: 'Tài xế xe tải 1.9 tấn',
+    roleSlug: 'OPERATOR',
+    email: 'dangvukhiem@chinhnam.vn',
+    department: 'Phòng Vật lực',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'CN-XD.2614',
+    fullName: 'Đặng Lê Hữu',
+    jobTitle: 'Nhân viên kho',
+    roleSlug: 'OPERATOR',
+    email: 'danglehuu@chinhnam.vn',
+    department: 'Phòng Vật lực',
+    company: 'Chính Nam',
+  },
+  {
+    employeeCode: 'CN-XD.2616',
+    fullName: 'Lê Thế Hòa',
+    jobTitle: 'Tài xế xe cuốc 5.5 tấn',
+    roleSlug: 'OPERATOR',
+    email: 'lethehoa@chinhnam.vn',
+    department: 'Phòng Vật lực',
+    company: 'Chính Nam',
+  },
+
+  // 10. KHỐI THIẾT KẾ (KIẾN TRÚC - NỘI THẤT - KẾT CẤU)
   {
     employeeCode: 'D17-001',
     fullName: 'Hoàng Văn Sáng',
@@ -375,6 +452,7 @@ export const employeeRoster = [
     roleSlug: 'DIR_DESIGN',
     email: 'hoangvansang@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'D16-002',
@@ -383,6 +461,7 @@ export const employeeRoster = [
     roleSlug: 'HEAD_ARCHITECTURE',
     email: 'traquoclinh@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E19-002',
@@ -391,6 +470,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_ARCHITECTURE',
     email: 'lethily@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E18-012',
@@ -399,6 +479,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_INTERIOR',
     email: 'dangthuckieu@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E18-010',
@@ -407,6 +488,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_INTERIOR',
     email: 'nguyenthidung@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E21-003',
@@ -415,6 +497,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_ARCHITECTURE',
     email: 'trinhngoctam@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E20-006',
@@ -423,6 +506,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_ARCHITECTURE',
     email: 'nguyenletrongtri@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E22-032',
@@ -431,6 +515,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_INTERIOR',
     email: 'vunhathao@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2546',
@@ -439,6 +524,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_INTERIOR',
     email: 'letanhuy@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2548',
@@ -447,6 +533,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_INTERIOR',
     email: 'phandinhthaonguyen@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2603',
@@ -455,6 +542,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_ARCHITECTURE',
     email: 'thaithanhtai@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2607',
@@ -463,6 +551,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_ARCHITECTURE',
     email: 'nguyentruongminhthu@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2611',
@@ -471,6 +560,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_ARCHITECTURE',
     email: 'buituanloc@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E20-007',
@@ -479,6 +569,7 @@ export const employeeRoster = [
     roleSlug: 'DEP_HEAD_STRUCTURE',
     email: 'doanngocdangkhoa@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E21-011',
@@ -487,6 +578,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_STRUCTURE',
     email: 'luubichphuong@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2509',
@@ -495,7 +587,10 @@ export const employeeRoster = [
     roleSlug: 'STAFF_STRUCTURE',
     email: 'tongduyduc@chinhnam.vn',
     department: 'Khối Thiết kế',
+    company: 'Chính Nam',
   },
+
+  // 11. KHỐI CƠ ĐIỆN (MEP)
   {
     employeeCode: 'CN-XD.2531',
     fullName: 'Trương Văn Việt',
@@ -503,6 +598,7 @@ export const employeeRoster = [
     roleSlug: 'DIR_MEP',
     email: 'truongvanviet@chinhnam.vn',
     department: 'Khối Cơ điện',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2539',
@@ -511,7 +607,10 @@ export const employeeRoster = [
     roleSlug: 'STAFF_MEP',
     email: 'huynhduyloc@chinhnam.vn',
     department: 'Khối Cơ điện',
+    company: 'Chính Nam',
   },
+
+  // 12. PHÒNG / KHỐI THI CÔNG
   {
     employeeCode: 'D12-004',
     fullName: 'Kiều Đại Hàn',
@@ -519,6 +618,7 @@ export const employeeRoster = [
     roleSlug: 'DIR_CONSTRUCTION',
     email: 'kieudaihan@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'D18-008',
@@ -527,6 +627,7 @@ export const employeeRoster = [
     roleSlug: 'DEP_DIR_CONSTRUCTION',
     email: 'ledinhhung@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E21-001',
@@ -535,6 +636,7 @@ export const employeeRoster = [
     roleSlug: 'DEP_DIR_CONSTRUCTION',
     email: 'levanduc@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E22-027',
@@ -543,6 +645,7 @@ export const employeeRoster = [
     roleSlug: 'DEP_DIR_CONSTRUCTION',
     email: 'phamxuanthanhlam@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E20-005',
@@ -551,6 +654,7 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'lauhanphia@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E22-033',
@@ -559,6 +663,7 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'phamcongduong@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E23-014',
@@ -567,6 +672,7 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'trancongnguyen@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'E24-014',
@@ -575,6 +681,7 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'tranquoctuan@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2408',
@@ -583,6 +690,7 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'dangcongdanh@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2524',
@@ -591,6 +699,7 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'tranlekhai@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2527',
@@ -599,6 +708,7 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'tranquantay@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2541',
@@ -607,6 +717,7 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'nguyenquochung@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2543',
@@ -615,6 +726,7 @@ export const employeeRoster = [
     roleSlug: 'OPERATOR',
     email: 'nguyenvominhquan@chinhnam.vn',
     department: 'Vận hành & Hậu cần',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2605',
@@ -623,6 +735,7 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'nguyentankhoi@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2613',
@@ -631,6 +744,7 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'trinhduyloc@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2617',
@@ -639,6 +753,7 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'nguyentienduy@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2620',
@@ -647,6 +762,7 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'lexuanhai@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2618',
@@ -655,6 +771,7 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'ledaicat@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
   {
     employeeCode: 'CN-XD.2624',
@@ -663,14 +780,18 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'nguyentangnhon@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'Chính Nam',
   },
+
+  // ─── CÔNG TY CP HẠ TẦNG GIAO THÔNG CÔNG NGHIỆP CN VINA (6 NHÂN SỰ) ──
   {
     employeeCode: 'CN-VN.2604',
     fullName: 'Phạm Văn Kháng',
     jobTitle: 'Giám đốc Kỹ thuật thi công',
     roleSlug: 'DIR_CONSTRUCTION',
     email: 'phamvankhang@chinhnam.vn',
-    department: 'Khối Thi công',
+    department: 'Ban Giám đốc',
+    company: 'CN VINA',
   },
   {
     employeeCode: 'CN-VN.2603',
@@ -679,6 +800,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_HR',
     email: 'tranthivy@chinhnam.vn',
     department: 'Hành chính Nhân sự',
+    company: 'CN VINA',
   },
   {
     employeeCode: 'CN-VN.2508',
@@ -687,6 +809,7 @@ export const employeeRoster = [
     roleSlug: 'OPERATOR',
     email: 'tranthihoa@chinhnam.vn',
     department: 'Vận hành & Hậu cần',
+    company: 'CN VINA',
   },
   {
     employeeCode: 'CN-VN.2501',
@@ -695,6 +818,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_FINANCE',
     email: 'nguyenthithu@chinhnam.vn',
     department: 'Tài chính Kế toán',
+    company: 'CN VINA',
   },
   {
     employeeCode: 'CN-VN.2406',
@@ -703,6 +827,7 @@ export const employeeRoster = [
     roleSlug: 'STAFF_SALES',
     email: 'lethienmyhanh@chinhnam.vn',
     department: 'Kinh doanh & CSKH',
+    company: 'CN VINA',
   },
   {
     employeeCode: 'CN-VN.2509',
@@ -710,8 +835,11 @@ export const employeeRoster = [
     jobTitle: 'Kỹ sư xây dựng',
     roleSlug: 'SITE_ENGINEER',
     email: 'nguyenvanlung@chinhnam.vn',
-    department: 'Khối Thi công',
+    department: 'Phòng Kỹ thuật',
+    company: 'CN VINA',
   },
+
+  // ─── CÔNG TY TNHH PHÁT TRIỂN HẠ TẦNG GIAO THÔNG FAQUA (3 NHÂN SỰ) ────
   {
     employeeCode: 'CN-FQ.2501',
     fullName: 'Trần Văn Nhật',
@@ -719,6 +847,7 @@ export const employeeRoster = [
     roleSlug: 'EXEC_CEO',
     email: 'tranvannhat@chinhnam.vn',
     department: 'Ban Giám đốc',
+    company: 'FAQUA',
   },
   {
     employeeCode: 'CN-FQ.2602',
@@ -727,6 +856,7 @@ export const employeeRoster = [
     roleSlug: 'SITE_ENGINEER',
     email: 'tranphungnhatnam@chinhnam.vn',
     department: 'Khối Thi công',
+    company: 'FAQUA',
   },
   {
     employeeCode: 'CN-FQ.2603',
@@ -735,5 +865,6 @@ export const employeeRoster = [
     roleSlug: 'STAFF_ESTIMATION',
     email: 'tokimtien@chinhnam.vn',
     department: 'Phòng Dự toán',
+    company: 'FAQUA',
   },
 ];

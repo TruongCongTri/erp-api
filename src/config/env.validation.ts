@@ -56,6 +56,24 @@ export class EnvironmentVariables {
   @IsString()
   @IsOptional()
   FRONTEND_URL?: string;
+
+  // AES-256-GCM key used to encrypt/decrypt Facebook session cookies at rest.
+  @IsString()
+  @IsOptional()
+  ENCRYPTION_KEY?: string;
+
+  // ATS AI provider switch: 'gemini' (default) or 'claude'.
+  @IsString()
+  @IsOptional()
+  AI_PROVIDER?: string;
+
+  @IsString()
+  @IsOptional()
+  GEMINI_API_KEY?: string;
+
+  @IsString()
+  @IsOptional()
+  ANTHROPIC_API_KEY?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

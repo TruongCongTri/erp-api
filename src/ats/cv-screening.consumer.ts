@@ -10,8 +10,9 @@ import { JobPost } from './entities/job-post.entity';
 import { CvParserService } from './cv-parser.service';
 import { AtsAiService } from './ats-ai.service';
 import { JobApplicationsService } from './job-applications.service';
-import { ApplicationPhase } from './enums/ats.enum';
+import { ApplicationPhase, AiScreeningTier } from './enums/ats.enum';
 import { JobApplication } from './entities/job-application.entity';
+import { ApplicationSubmission } from './entities/application-submission.entity';
 import { ATS_CV_SCREENING_QUEUE } from './ats.constants';
 import { S3StorageService } from './s3-storage.service';
 
@@ -27,6 +28,8 @@ export class CvScreeningConsumer extends WorkerHost {
     private readonly applicationRepo: Repository<JobApplication>,
     @InjectRepository(JobPost)
     private readonly jobPostRepo: Repository<JobPost>,
+    @InjectRepository(ApplicationSubmission)
+    private readonly submissionRepo: Repository<ApplicationSubmission>,
     private readonly applicationsService: JobApplicationsService,
   ) {
     super();
@@ -162,13 +165,29 @@ export class CvScreeningConsumer extends WorkerHost {
         `[Screening Error] Xử lý hồ sơ ${applicationId} thất bại: ${error.message}`,
       );
 
-      // Cập nhật trạng thái thông báo lỗi, tránh ứng dụng bị treo ở AI_SCREENING
+      // Lỗi kỹ thuật (S3/AI/parsing) khác với việc AI thực sự chấm điểm thấp -> dùng trạng thái
+      // riêng SCREENING_FAILED để HR biết đây là lỗi cần bấm chấm điểm lại thủ công,
+      // KHÔNG PHẢI ứng viên đã bị AI từ chối.
+      //
+      // aiScore = null + aiTier = N/A: tuyệt đối KHÔNG lưu điểm mặc định (0 hay bất kỳ số nào)
+      // cho hồ sơ chưa từng được chấm, tránh việc HR/dashboard hiểu sai là "ứng viên 0 điểm".
       await this.applicationRepo.update(applicationId, {
-        status: ApplicationPhase.SCREENING_REJECTED,
+        status: ApplicationPhase.SCREENING_FAILED,
+        aiScore: null,
+        aiTier: AiScreeningTier.NOT_AVAILABLE,
+        aiReasoning: `**Không thể chấm điểm tự động (N/A).** Lý do: ${error?.message || 'Không thể xử lý tệp CV'}. Vui lòng khắc phục nguyên nhân rồi bấm "Chấm điểm lại".`,
         internalHrNotes: `[Lỗi sàng lọc tự động]: ${error?.message || 'Không thể xử lý tệp CV'}`,
       });
 
-      // Dùng UnrecoverableError để BullMQ dừng ngay lập tức, không retry lặp vô hạn
+      if (submissionId) {
+        await this.submissionRepo.update(submissionId, {
+          aiScore: null,
+          aiTier: AiScreeningTier.NOT_AVAILABLE,
+        });
+      }
+
+      // Dùng UnrecoverableError để BullMQ dừng ngay lập tức, không retry lặp vô hạn.
+      // HR có thể bấm "Chấm điểm lại" thủ công qua POST /ats/applications/:id/rescreen
       throw new UnrecoverableError(error?.message || 'Lỗi xử lý sàng lọc CV');
     }
   }
@@ -176,49 +195,12 @@ export class CvScreeningConsumer extends WorkerHost {
   private async downloadCvFile(
     url: string,
   ): Promise<{ buffer: Buffer; mimeType: string }> {
-    // 1. Fallback giả lập cho môi trường Test / Development khi URL storage nội bộ chưa có DNS thực
-    if (
-      process.env.NODE_ENV !== 'production' &&
-      (url.includes('storage.chinhnambkd.vn') ||
-        url.includes('localhost') ||
-        url.includes('mock') ||
-        url.includes('dummy'))
-    ) {
-      this.logger.warn(
-        `[Mock Storage] Phát hiện URL thử nghiệm nội bộ: ${url}. Tự động tạo nội dung CV giả lập để tiếp tục quy trình AI.`,
-      );
-
-      const mockCvText = `
-HỌ VÀ TÊN: Trương Công Trí
-VỊ TRÍ: Kỹ Sư Công Nghệ / Kỹ Sư Kết Cấu
-EMAIL: congtritruong@gmail.com
-SỐ ĐIỆN THOẠI: 0901234567
-
-TÓM TẮT CHUYÊN MÔN:
-- Hơn 3 năm kinh nghiệm trong thiết kế kết cấu, mô hình hóa BIM và phát triển giải pháp phần mềm quản trị kỹ thuật.
-- Sử dụng thành thạo Revit, AutoCAD, BIM 360, Navisworks.
-- Am hiểu quy trình tổng thầu EPC, giám sát thi công, bóc tách khối lượng BOQ và tiêu chuẩn xây dựng.
-- Thành thạo TypeScript, Node.js, NestJS, cơ sở dữ liệu PostgreSQL.
-
-KINH NGHIỆM LÀM VIỆC:
-1. Kỹ sư Kết cấu & Phần mềm - Công ty Cổ phần Thiết kế Xây dựng Chính Nam (2023 - Nay):
-- Triển khai mô hình BIM, phối hợp kết cấu - MEP cho các dự án nhà xưởng cao tầng tại Đồng Nai và TP.HCM.
-- Xây dựng dashboard theo dõi tiến độ và tối ưu luồng dữ liệu kỹ thuật.
-
-2. Kỹ sư dự án (2021 - 2023):
-- Lập bản vẽ shop drawing, kiểm soát xung đột mô hình 3D, phối hợp đội ngũ giám sát hiện trường.
-
-HỌC VẤN:
-- Cử nhân Kỹ thuật / Công nghệ phần mềm.
-      `.trim();
-
-      return {
-        buffer: Buffer.from(mockCvText, 'utf-8'),
-        mimeType: 'text/plain',
-      };
-    }
-
-    // 2. Tải file thực tế qua fetch với kiểm soát Timeout (15s)
+    // Tải file thực tế qua fetch với kiểm soát Timeout (15s).
+    // LƯU Ý: Trước đây có nhánh "Mock Storage" tự sinh nội dung CV giả khi gặp URL nội bộ/test
+    // (storage.chinhnambkd.vn, localhost, mock, dummy) - đã loại bỏ vì nó âm thầm che giấu lỗi
+    // đọc CV thật sự (S3 NoSuchKey, mất mạng...) khiến AI chấm điểm trên dữ liệu giả mà không ai biết.
+    // Giờ mọi lỗi tải CV đều throw ra ngoài -> hồ sơ chuyển sang SCREENING_FAILED để HR bấm
+    // "Chấm điểm lại" thủ công sau khi đã khắc phục nguyên nhân gốc.
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
       if (!response.ok) {

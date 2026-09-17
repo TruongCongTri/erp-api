@@ -73,6 +73,9 @@ export const rolesMatrix = [
     'DIR_HR_ADMIN',
     'Giám Đốc Hành chính Nhân sự',
     'hr:*:any',
+    // Toàn quyền vận hành Publishing Automation: quản lý tài khoản Facebook
+    // (bao gồm xác minh lại checkpoint), duyệt/điều phối đăng tin đa kênh.
+    'publishing_automation:*:any',
     grant('asset', 'read', 'any'),
     grant('audit_log', 'read', 'dept'),
     grant('audit_log', 'read', 'own'),
@@ -84,6 +87,9 @@ export const rolesMatrix = [
     'DEP_DIR_HR_ADMIN',
     'Phó Giám Đốc Hành chính Nhân sự',
     grant('hr', ['create', 'update', 'read'], 'dept'),
+    // Cùng quyền vận hành như Giám đốc: đăng tin tuyển dụng đa kênh không bị
+    // giới hạn theo phòng ban.
+    'publishing_automation:*:any',
     grant('asset', 'read', 'any'),
     grant('audit_log', 'read', 'dept'),
     grant('audit_log', 'read', 'own'),
@@ -101,6 +107,10 @@ export const rolesMatrix = [
     grant('audit_log', 'read', 'own'),
     'ats_job_post:*:any',
     'ats_candidate:*:any',
+    // Chuyên viên tuyển dụng: được tạo/xem/chỉnh sửa lịch đăng tin & nhóm
+    // Facebook hằng ngày, nhưng không có quyền "manage" cấp cao (ví dụ: các
+    // thao tác vận hành nhạy cảm nên dành cho cấp Giám đốc/Phó Giám đốc).
+    grant('publishing_automation', ['create', 'read', 'update'], 'any'),
     STAFF_COMMON_PERMS,
   ),
 

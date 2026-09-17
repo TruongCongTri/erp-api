@@ -12,7 +12,9 @@ import {
   CandidateSubmissionIngestedEvent,
   CandidateShortlistedEvent,
   CandidateScreeningRejectedEvent,
+  CandidatePooledEvent,
 } from './ats-domain.events';
+import { CV_RETENTION_DAYS } from './ats.constants';
 import { Notification } from 'src/notifications/entities/notification.entity';
 import { NotificationsGateway } from 'src/notifications/notifications.gateway';
 import { User } from 'src/users/entities/users.entity';
@@ -295,7 +297,7 @@ export class AtsDomainEventsListener {
         priority: NotificationPriority.HIGH,
         actorType: ActorType.WORKFLOW_ENGINE,
         title: `Ứng viên tiềm năng cao! (${event.aiScore}/100 điểm) 🌟`,
-        body: `AI đã chấm điểm ứng viên ${event.candidateName} đạt ${event.aiScore} điểm cho vị trí ${event.jobTitle}. Vui lòng lên lịch phỏng vấn.`,
+        body: `AI đã chấm điểm ứng viên ${event.candidateName} đạt ${event.aiScore} điểm cho vị trí ${event.jobTitle}. Đề xuất chuyển ứng viên sang vòng tiếp theo (phỏng vấn).`,
         targetEntityType: 'JobApplication',
         targetEntityId: event.applicationId,
         actionUrl: `/ats/applications/${event.applicationId}`,
@@ -317,15 +319,105 @@ export class AtsDomainEventsListener {
   }
 
   // ========================================================
-  // 6. AI < 50 ĐIỂM -> GHI NHẬN KIỂM TOÁN IM LẶNG (SILENT AUDIT)
+  // 6B. AI 50-79 ĐIỂM -> BÁO CHO HR: CV VẪN ĐƯỢC LƯU TRỮ TRONG KHO DỰ TRỮ
+  // ========================================================
+  @OnEvent('ats.candidate_pooled', { async: true })
+  async handleCandidatePooled(event: CandidatePooledEvent): Promise<void> {
+    this.logger.log(
+      `[Event: Candidate Pooled] ${event.candidateName} đạt ${event.aiScore}/100 điểm cho vị trí ${event.jobTitle} -> SAVED_POOL`,
+    );
+
+    const recipients = await this.userRepo
+      .createQueryBuilder('user')
+      .leftJoinAndSelect('user.role', 'role')
+      .where('role.slug IN (:...roles)', { roles: ADMIN_AND_HR_ROLES })
+      .getMany();
+
+    if (recipients.length === 0) return;
+
+    const notifications = recipients.map((hrUser) =>
+      this.notificationRepo.create({
+        recipientId: hrUser.id,
+        organizationId: hrUser.organizationId ?? FALLBACK_ORG_ID,
+        departmentId: hrUser.departmentId ?? FALLBACK_DEPT_ID,
+        category: NotificationCategory.TASK,
+        taskType: 'CANDIDATE_POOLED',
+        priority: NotificationPriority.NORMAL,
+        actorType: ActorType.WORKFLOW_ENGINE,
+        title: `Ứng viên vào Kho dự trữ (${event.aiScore}/100 điểm)`,
+        body: `AI đã chấm điểm ứng viên ${event.candidateName} đạt ${event.aiScore} điểm cho vị trí ${event.jobTitle} - mức trung bình. CV vẫn được lưu trữ trong hệ thống để xem xét sau.`,
+        targetEntityType: 'JobApplication',
+        targetEntityId: event.applicationId,
+        actionUrl: `/ats/applications/${event.applicationId}`,
+        deliveryChannels: [DeliveryChannel.IN_APP],
+      }),
+    );
+
+    const saved = await this.notificationRepo.save(notifications);
+    saved.forEach((notif) => {
+      this.gateway.pushToUser(notif.recipientId, {
+        id: notif.id,
+        title: notif.title,
+        message: notif.body,
+        actionUrl: notif.actionUrl,
+        createdAt: notif.createdAt,
+        isRead: notif.isRead,
+      });
+    });
+  }
+
+  // ========================================================
+  // 6. AI < 50 ĐIỂM -> BÁO HR XEM XÉT TRONG 7 NGÀY + GHI KIỂM TOÁN
   // ========================================================
   @OnEvent('ats.candidate_rejected', { async: true })
-  handleCandidateScreeningRejected(
+  async handleCandidateScreeningRejected(
     event: CandidateScreeningRejectedEvent,
-  ): void {
+  ): Promise<void> {
     this.logger.log(
       `[Event: Candidate Auto-Rejected] ${event.candidateName} không đạt tiêu chuẩn sơ loại (${event.aiScore}/100 điểm)`,
     );
+
+    const recipients = await this.userRepo
+      .createQueryBuilder('user')
+      .leftJoinAndSelect('user.role', 'role')
+      .where('role.slug IN (:...roles)', { roles: ADMIN_AND_HR_ROLES })
+      .getMany();
+
+    if (recipients.length > 0) {
+      const purgeDateLabel = event.cvPurgeAt
+        ? new Date(event.cvPurgeAt).toLocaleDateString('vi-VN')
+        : `${CV_RETENTION_DAYS} ngày tới`;
+
+      const notifications = recipients.map((hrUser) =>
+        this.notificationRepo.create({
+          recipientId: hrUser.id,
+          organizationId: hrUser.organizationId ?? FALLBACK_ORG_ID,
+          departmentId: hrUser.departmentId ?? FALLBACK_DEPT_ID,
+          category: NotificationCategory.ALERT,
+          taskType: 'CANDIDATE_SCREENING_REJECTED',
+          priority: NotificationPriority.NORMAL,
+          actorType: ActorType.WORKFLOW_ENGINE,
+          title: `Ứng viên bị AI sơ loại (${event.aiScore}/100 điểm)`,
+          body: `AI đã chấm điểm ứng viên ${event.candidateName} chỉ đạt ${event.aiScore} điểm cho vị trí ${event.jobTitle ?? 'vị trí tuyển dụng'}. Vui lòng xem xét hồ sơ và cập nhật trạng thái nếu muốn giữ lại; nếu không, CV sẽ tự động bị xóa khỏi hệ thống lưu trữ vào ${purgeDateLabel}.`,
+          targetEntityType: 'JobApplication',
+          targetEntityId: event.applicationId,
+          actionUrl: `/ats/applications/${event.applicationId}`,
+          deliveryChannels: [DeliveryChannel.IN_APP],
+        }),
+      );
+
+      const saved = await this.notificationRepo.save(notifications);
+      saved.forEach((notif) => {
+        this.gateway.pushToUser(notif.recipientId, {
+          id: notif.id,
+          title: notif.title,
+          message: notif.body,
+          actionUrl: notif.actionUrl,
+          createdAt: notif.createdAt,
+          isRead: notif.isRead,
+        });
+      });
+    }
 
     const logDto = new SaveAuditLogDto();
     logDto.actorId = SYSTEM_UUID;
@@ -335,7 +427,7 @@ export class AtsDomainEventsListener {
     logDto.actorRoleLevel = ActorRoleLevel.STAFF;
     logDto.clientApp = AuditClientApp.BACKGROUND_JOB;
     logDto.ipAddress = '127.0.0.1';
-    logDto.userAgent = 'Gemini-Screening-Worker';
+    logDto.userAgent = 'AI-Screening-Worker';
     logDto.status = AuditStatus.SUCCESS;
     logDto.actionType = AuditActionType.REJECT;
     logDto.actionLabel = 'Sơ loại ứng viên tự động';

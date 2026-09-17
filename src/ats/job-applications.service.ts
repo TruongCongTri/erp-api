@@ -9,6 +9,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, SelectQueryBuilder } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 
 import { JobApplication } from './entities/job-application.entity';
 import { JobPost } from './entities/job-post.entity';
@@ -37,10 +39,16 @@ import {
   ExtendedUser,
 } from '../common/utils/ats-rbac.util';
 import { S3StorageService } from './s3-storage.service';
-import { CandidateScreeningRejectedEvent } from './ats-domain.events';
+import {
+  CandidateScreeningRejectedEvent,
+  CandidatePooledEvent,
+} from './ats-domain.events';
+import { CV_RETENTION_DAYS, ATS_CV_SCREENING_QUEUE } from './ats.constants';
+import { ScreeningJobPayload } from './cv-screening.types';
 
 export interface CvScoreResult {
-  aiScore: number;
+  /** null = AI không chấm được (tier N/A). Không bao giờ lưu 0 làm giá trị mặc định. */
+  aiScore: number | null;
   aiTier: AiScreeningTier;
   aiReasoning: string;
 }
@@ -58,6 +66,8 @@ export class JobApplicationsService {
     @InjectRepository(ApplicationSubmission)
     private readonly submissionRepo: Repository<ApplicationSubmission>,
     private readonly s3StorageService: S3StorageService,
+    @InjectQueue(ATS_CV_SCREENING_QUEUE)
+    private readonly screeningQueue: Queue<ScreeningJobPayload>,
   ) {}
 
   // ========================================================
@@ -73,9 +83,12 @@ export class JobApplicationsService {
       throw new NotFoundException(`Tin tuyển dụng ${jobPostId} không tồn tại.`);
     }
 
-    if (jobPost.status !== JobPostStatus.PUBLISHED) {
+    // Chỉ tin ở trạng thái nháp (DRAFT) mới chặn nộp hồ sơ. Mọi trạng thái khác
+    // (PENDING_HEAD_APPROVAL, PUBLISHED, CLOSED, ARCHIVED) đều tiếp nhận hồ sơ,
+    // phục vụ HR nhập liệu thủ công / webhook về sau khi tin đã đóng.
+    if (jobPost.status === JobPostStatus.DRAFT) {
       throw new BadRequestException(
-        'Tin tuyển dụng hiện không còn tiếp nhận hồ sơ.',
+        'Tin tuyển dụng đang ở trạng thái nháp (DRAFT) nên chưa thể tiếp nhận hồ sơ.',
       );
     }
 
@@ -151,6 +164,22 @@ export class JobApplicationsService {
     application.updatedBy = user.id || user.sub;
 
     const saved = await this.applicationRepo.save(application);
+
+    // Nếu HR chủ động chuyển hồ sơ ra khỏi SCREENING_REJECTED (giữ lại để tham khảo sau này),
+    // hủy lịch tự động xóa CV đang chờ xử lý cho các submission của hồ sơ này.
+    if (
+      oldPhase === ApplicationPhase.SCREENING_REJECTED &&
+      dto.phase !== ApplicationPhase.SCREENING_REJECTED
+    ) {
+      await this.submissionRepo
+        .createQueryBuilder()
+        .update(ApplicationSubmission)
+        .set({ cvPurgeAt: null })
+        .where('application_id = :applicationId', { applicationId: id })
+        .andWhere('is_cv_purged = false')
+        .andWhere('cv_purge_at IS NOT NULL')
+        .execute();
+    }
 
     this.eventEmitter.emit(
       'application.phase_changed',
@@ -319,7 +348,7 @@ export class JobApplicationsService {
       );
     }
 
-    // 1. Phân luồng chính xác theo 3 bậc chuẩn của AiScreeningTier
+    // 1. Phân luồng chính xác theo các bậc chuẩn của AiScreeningTier
     let nextStatus: ApplicationPhase;
 
     switch (scoreResult.aiTier) {
@@ -332,14 +361,24 @@ export class JobApplicationsService {
         break;
 
       case AiScreeningTier.MEDIUM:
-      default:
         nextStatus = ApplicationPhase.SAVED_POOL;
+        break;
+
+      case AiScreeningTier.NOT_AVAILABLE:
+      default:
+        // KHÔNG chấm được -> không tự phân luồng, chờ HR chấm lại thủ công.
+        // Tuyệt đối không suy ra MEDIUM/SAVED_POOL từ việc thiếu điểm.
+        nextStatus = ApplicationPhase.SCREENING_FAILED;
         break;
     }
 
-    // 2. Cập nhật trạng thái tổng thể cho JobApplication
+    // 2. Cập nhật trạng thái tổng thể cho JobApplication.
+    // aiScore = null khi tier N/A (không lưu giá trị mặc định).
     application.status = nextStatus;
-    application.aiScore = scoreResult.aiScore;
+    application.aiScore =
+      scoreResult.aiTier === AiScreeningTier.NOT_AVAILABLE
+        ? null
+        : scoreResult.aiScore;
     application.aiTier = scoreResult.aiTier;
     application.aiReasoning = scoreResult.aiReasoning;
 
@@ -361,26 +400,27 @@ export class JobApplicationsService {
       });
     }
 
+    let purgeDeadline: Date | null = null;
+
     if (targetSubmission) {
-      targetSubmission.aiScore = scoreResult.aiScore;
+      targetSubmission.aiScore =
+        scoreResult.aiTier === AiScreeningTier.NOT_AVAILABLE
+          ? null
+          : scoreResult.aiScore;
       targetSubmission.aiTier = scoreResult.aiTier;
       targetSubmission.aiReasoning = scoreResult.aiReasoning;
 
-      // 4. Nếu Tier LOW: Xóa CV vật lý trên AWS S3 và đánh dấu đã tiêu hủy
+      // 4. Nếu Tier LOW: KHÔNG xóa CV ngay. Cho HR 7 ngày để xem xét & cập nhật trạng thái
+      // trước khi hệ thống tự động tiêu hủy CV khỏi S3 (xem CvRetentionCronService).
       if (scoreResult.aiTier === AiScreeningTier.LOW) {
-        const fileKeyToDelete = targetSubmission.cvFileKey;
+        purgeDeadline = new Date();
+        purgeDeadline.setDate(purgeDeadline.getDate() + CV_RETENTION_DAYS);
 
-        if (fileKeyToDelete) {
-          this.logger.log(
-            `[Low Tier Policy] Ứng viên thuộc tier LOW (${scoreResult.aiScore}đ). Tiến hành xóa CV ${fileKeyToDelete} khỏi S3 để tiết kiệm dung lượng & bảo vệ dữ liệu...`,
-          );
-          await this.s3StorageService.deleteFile(fileKeyToDelete);
-        }
+        this.logger.log(
+          `[Low Tier Policy] Ứng viên thuộc tier LOW (${scoreResult.aiScore}đ). CV sẽ được HR xem xét trong ${CV_RETENTION_DAYS} ngày trước khi tự động bị xóa khỏi S3 vào ${purgeDeadline.toISOString()}.`,
+        );
 
-        // Xóa liên kết file vật lý nhưng BẢO TOÀN toàn bộ aiScore, aiReasoning, aiTier
-        targetSubmission.cvFileKey = null;
-        targetSubmission.cvUrl = '';
-        targetSubmission.isCvPurged = true;
+        targetSubmission.cvPurgeAt = purgeDeadline;
       }
 
       await this.submissionRepo.save(targetSubmission);
@@ -390,7 +430,16 @@ export class JobApplicationsService {
     const currentSubmissionId = targetSubmission?.id ?? submissionId ?? null;
 
     // 4. BẮN SỰ KIỆN THÔNG BÁO CHO HỆ THỐNG
-    if (scoreResult.aiTier === AiScreeningTier.HIGH) {
+    if (
+      scoreResult.aiTier === AiScreeningTier.NOT_AVAILABLE ||
+      scoreResult.aiScore === null
+    ) {
+      // Không có điểm -> không bắn sự kiện phân luồng (shortlist/pool/reject)
+      // vì mọi thông báo đó đều hàm ý đã có kết quả chấm điểm.
+      this.logger.warn(
+        `[Scoring N/A] Application ${savedApp.id} không có điểm AI -> chuyển SCREENING_FAILED, chờ HR chấm điểm lại thủ công.`,
+      );
+    } else if (scoreResult.aiTier === AiScreeningTier.HIGH) {
       this.eventEmitter.emit(
         'ats.candidate_shortlisted',
         new CandidateShortlistedEvent(
@@ -416,12 +465,105 @@ export class JobApplicationsService {
           scoreResult.aiScore,
           scoreResult.aiReasoning,
           currentSubmissionId,
-          true, // isCvPurged
+          false, // isCvPurged: CV được giữ lại chờ HR xem xét trong thời gian bảo lưu
+          savedApp.jobPost?.publicTitle ?? 'Vị trí tuyển dụng',
+          purgeDeadline,
+        ),
+      );
+    } else {
+      this.eventEmitter.emit(
+        'ats.candidate_pooled',
+        new CandidatePooledEvent(
+          savedApp.id,
+          savedApp.candidateId,
+          savedApp.jobPostId,
+          savedApp.candidate?.fullName ?? 'Ứng viên',
+          savedApp.jobPost?.publicTitle ?? 'Vị trí tuyển dụng',
+          scoreResult.aiScore,
+          currentSubmissionId,
         ),
       );
     }
 
     return savedApp;
+  }
+
+  // ========================================================
+  // 4B. HR CHỦ ĐỘNG CHẤM ĐIỂM LẠI SAU KHI SÀNG LỌC AI LỖI KỸ THUẬT
+  // ========================================================
+  async retryScreening(
+    applicationId: string,
+    user: ActiveUserData,
+  ): Promise<JobApplication> {
+    const application = await this.applicationRepo.findOne({
+      where: { id: applicationId },
+      relations: {
+        jobPost: {
+          recruitmentRequest: {
+            department: true,
+          },
+        },
+      },
+    });
+
+    if (!application) {
+      throw new NotFoundException(
+        `Không tìm thấy hồ sơ ứng tuyển ID: ${applicationId}`,
+      );
+    }
+
+    await this.assertManagePermission(application, user);
+
+    if (application.status !== ApplicationPhase.SCREENING_FAILED) {
+      throw new ConflictException(
+        `Chỉ có thể chấm điểm lại hồ sơ đang ở trạng thái SCREENING_FAILED. Trạng thái hiện tại: ${application.status}`,
+      );
+    }
+
+    const targetSubmission = await this.submissionRepo.findOne({
+      where: { applicationId },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (!targetSubmission) {
+      throw new NotFoundException(
+        `Hồ sơ ứng tuyển ${applicationId} không có lượt nộp CV nào để chấm điểm lại.`,
+      );
+    }
+
+    application.status = ApplicationPhase.AI_SCREENING;
+    application.internalHrNotes = application.internalHrNotes
+      ? `${application.internalHrNotes}\n[${new Date().toISOString()}] HR (${user.fullName || user.id}) yêu cầu chấm điểm lại thủ công.`
+      : `[${new Date().toISOString()}] HR (${user.fullName || user.id}) yêu cầu chấm điểm lại thủ công.`;
+    application.updatedBy = user.id || user.sub;
+
+    const saved = await this.applicationRepo.save(application);
+
+    const uniqueJobId = `screen-retry-${applicationId}-${Date.now()}`;
+    await this.screeningQueue.add(
+      'process-cv',
+      {
+        applicationId: saved.id,
+        submissionId: targetSubmission.id,
+        candidateId: saved.candidateId,
+        jobPostId: saved.jobPostId,
+        cvFileKey: targetSubmission.cvFileKey,
+        cvUrl: targetSubmission.cvUrl,
+      },
+      {
+        jobId: uniqueJobId,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
+    );
+
+    this.logger.log(
+      `[Manual Retry] HR (${user.id || user.sub}) đã yêu cầu chấm điểm lại Application: ${applicationId}`,
+    );
+
+    return saved;
   }
 
   // ========================================================
@@ -519,6 +661,62 @@ export class JobApplicationsService {
       where: { applicationId },
       order: { createdAt: 'DESC' },
     });
+  }
+
+  // ========================================================
+  // 6. HR CHỦ ĐỘNG XÓA NGAY CV (KHÔNG CẦN CHỜ 7 NGÀY)
+  // ========================================================
+  async purgeCvNow(
+    applicationId: string,
+    submissionId: string,
+    user: ActiveUserData,
+  ): Promise<ApplicationSubmission> {
+    const application = await this.applicationRepo.findOne({
+      where: { id: applicationId },
+      relations: {
+        jobPost: {
+          recruitmentRequest: {
+            department: true,
+          },
+        },
+      },
+    });
+
+    if (!application) {
+      throw new NotFoundException(
+        `Không tìm thấy hồ sơ ứng tuyển ID: ${applicationId}`,
+      );
+    }
+
+    await this.assertManagePermission(application, user);
+
+    const submission = await this.submissionRepo.findOneBy({
+      id: submissionId,
+      applicationId,
+    });
+
+    if (!submission) {
+      throw new NotFoundException(
+        `Không tìm thấy lượt nộp CV ID: ${submissionId} thuộc hồ sơ ứng tuyển này.`,
+      );
+    }
+
+    if (submission.isCvPurged || !submission.cvFileKey) {
+      return submission;
+    }
+
+    this.logger.log(
+      `[Manual Purge] HR (${user.id || user.sub}) yêu cầu xóa ngay CV ${submission.cvFileKey} khỏi S3.`,
+    );
+
+    await this.s3StorageService.deleteFile(submission.cvFileKey);
+
+    submission.cvFileKey = null;
+    submission.cvUrl = '';
+    submission.isCvPurged = true;
+    submission.cvPurgeAt = null;
+
+    return this.submissionRepo.save(submission);
   }
 
   // ========================================================
@@ -653,6 +851,12 @@ export class JobApplicationsService {
       [ApplicationPhase.HIRED]: [],
       [ApplicationPhase.SCREENING_REJECTED]: [
         ApplicationPhase.SAVED_POOL, // Cho phép khôi phục vào kho lưu trữ
+      ],
+      [ApplicationPhase.SCREENING_FAILED]: [
+        ApplicationPhase.AI_SCREENING, // Dùng bởi retryScreening() khi HR bấm "Chấm điểm lại"
+        ApplicationPhase.SAVED_POOL,
+        ApplicationPhase.SCREENING_REJECTED,
+        ApplicationPhase.WITHDRAWN,
       ],
       [ApplicationPhase.WITHDRAWN]: [],
     };

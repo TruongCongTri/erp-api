@@ -115,7 +115,10 @@ export function hasPermission(
 }
 
 /**
- * Truy xuất an toàn departmentId của User với cơ chế fallback đa tầng và logging chẩn đoán.
+ * Truy xuất departmentId của User dựa trên schema thực tế:
+ * - `users.department_id` (User.department, xem src/users/entities/users.entity.ts)
+ * - `departments.head_user_id` cho trường hợp user là Trưởng bộ phận nhưng
+ *   chưa được gán department_id trực tiếp (xem src/departments/entities/department.entity.ts)
  */
 export async function getUserDepartmentId(
   manager: EntityManager,
@@ -149,127 +152,21 @@ export async function getUserDepartmentId(
     return undefined;
   }
 
-  // 2. Tra cứu cột phòng ban trong bảng users (hỗ trợ cả snake_case và camelCase)
-  const userQueries = [
+  // 2. Tra cứu department_id trực tiếp trên bảng users
+  const userRows = await manager.query<DeptIdRow[]>(
     `SELECT department_id as "deptId" FROM users WHERE id = $1 LIMIT 1`,
-    `SELECT "departmentId" as "deptId" FROM users WHERE id = $1 LIMIT 1`,
-    `SELECT department_id as "deptId" FROM "user" WHERE id = $1 LIMIT 1`,
-    `SELECT "departmentId" as "deptId" FROM "user" WHERE id = $1 LIMIT 1`,
-  ];
-
-  for (const queryStr of userQueries) {
-    try {
-      const rows = await manager.query<DeptIdRow[]>(queryStr, [userId]);
-      if (
-        Array.isArray(rows) &&
-        rows.length > 0 &&
-        rows[0]?.deptId &&
-        rows[0].deptId !== 'GLOBAL'
-      ) {
-        return rows[0].deptId;
-      }
-    } catch {
-      // Tiếp tục thử câu truy vấn tiếp theo
-    }
+    [userId],
+  );
+  const directDeptId = userRows?.[0]?.deptId;
+  if (directDeptId && directDeptId !== 'GLOBAL') {
+    return directDeptId;
   }
 
-  // 3. Tra cứu bảng trung gian thành viên phòng ban
-  const membershipQueries = [
-    `SELECT department_id as "deptId" FROM department_members WHERE user_id = $1 LIMIT 1`,
-    `SELECT "departmentId" as "deptId" FROM department_members WHERE "userId" = $1 LIMIT 1`,
-    `SELECT department_id as "deptId" FROM user_departments WHERE user_id = $1 LIMIT 1`,
-    `SELECT "departmentId" as "deptId" FROM user_departments WHERE "userId" = $1 LIMIT 1`,
-    `SELECT department_id as "deptId" FROM staff_departments WHERE user_id = $1 LIMIT 1`,
-  ];
-
-  for (const queryStr of membershipQueries) {
-    try {
-      const rows = await manager.query<DeptIdRow[]>(queryStr, [userId]);
-      if (
-        Array.isArray(rows) &&
-        rows.length > 0 &&
-        rows[0]?.deptId &&
-        rows[0].deptId !== 'GLOBAL'
-      ) {
-        return rows[0].deptId;
-      }
-    } catch {
-      // Tiếp tục thử câu truy vấn tiếp theo
-    }
-  }
-
-  // 4. Tra cứu bảng departments theo các trường quản lý (head, manager, leader)
-  const deptQueries = [
-    `SELECT id FROM departments WHERE head_id = $1 OR manager_id = $1 OR leader_id = $1 OR user_id = $1 LIMIT 1`,
-    `SELECT id FROM departments WHERE "headId" = $1 OR "managerId" = $1 OR "leaderId" = $1 OR "userId" = $1 LIMIT 1`,
-    `SELECT id FROM department WHERE head_id = $1 OR manager_id = $1 OR leader_id = $1 LIMIT 1`,
-    `SELECT id FROM department WHERE "headId" = $1 OR "managerId" = $1 OR "leaderId" = $1 LIMIT 1`,
-  ];
-
-  for (const queryStr of deptQueries) {
-    try {
-      const rows = await manager.query<IdRow[]>(queryStr, [userId]);
-      if (Array.isArray(rows) && rows.length > 0 && rows[0]?.id) {
-        return rows[0].id;
-      }
-    } catch {
-      // Tiếp tục thử câu truy vấn tiếp theo
-    }
-  }
-
-  // 5. Khớp theo Role Slug của Trưởng phòng ban (Ví dụ: HEAD_ARCHITECTURE -> ARCHITECTURE / Kiến trúc)
-  let roleSlug = '';
-  if (typeof user.roleSlug === 'string') {
-    roleSlug = user.roleSlug;
-  } else if (
-    typeof user.role === 'object' &&
-    user.role !== null &&
-    typeof user.role.slug === 'string'
-  ) {
-    roleSlug = user.role.slug;
-  } else if (typeof user.role === 'string') {
-    roleSlug = user.role;
-  }
-
-  const normalizedRole = roleSlug.toUpperCase();
-  if (normalizedRole.startsWith('HEAD_')) {
-    const rawKeyword = normalizedRole.replace('HEAD_', '');
-    const keywordVariants: string[] = [rawKeyword];
-
-    // Ánh xạ từ khóa tiếng Anh sang các tên phòng ban tiếng Việt tương ứng
-    if (rawKeyword === 'ARCHITECTURE') {
-      keywordVariants.push('KIẾN TRÚC', 'KIEN TRUC', 'ARCH', 'KT');
-    } else if (rawKeyword === 'STRUCTURE') {
-      keywordVariants.push('KẾT CẤU', 'KET CAU', 'KC');
-    } else if (rawKeyword === 'MEP') {
-      keywordVariants.push('CƠ ĐIỆN', 'CO DIEN');
-    } else if (rawKeyword === 'HR' || rawKeyword === 'HUMAN_RESOURCE') {
-      keywordVariants.push('NHÂN SỰ', 'NHAN SU');
-    } else if (rawKeyword === 'ACCOUNTING' || rawKeyword === 'FINANCE') {
-      keywordVariants.push('KẾ TOÁN', 'KE TOAN', 'TÀI CHÍNH');
-    }
-
-    for (const variant of keywordVariants) {
-      const roleMatchQueries = [
-        `SELECT id FROM departments WHERE UPPER(code) = $1 OR UPPER(name) LIKE $2 LIMIT 1`,
-        `SELECT id FROM department WHERE UPPER(code) = $1 OR UPPER(name) LIKE $2 LIMIT 1`,
-      ];
-
-      for (const queryStr of roleMatchQueries) {
-        try {
-          const rows = await manager.query<Array<{ id?: string }>>(queryStr, [
-            variant,
-            `%${variant}%`,
-          ]);
-          if (Array.isArray(rows) && rows.length > 0 && rows[0]?.id) {
-            return rows[0].id;
-          }
-        } catch {
-          // Tiếp tục thử
-        }
-      }
-    }
-  }
-
-  return undefined;
+  // 3. Fallback: user là Trưởng bộ phận (departments.head_user_id) nhưng chưa được
+  // gán department_id trực tiếp trên hồ sơ của mình
+  const headRows = await manager.query<IdRow[]>(
+    `SELECT id FROM departments WHERE head_user_id = $1 LIMIT 1`,
+    [userId],
+  );
+  return headRows?.[0]?.id ?? undefined;
 }

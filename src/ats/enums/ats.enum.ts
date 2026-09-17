@@ -77,6 +77,7 @@ export enum PlatformSource {
 export enum ApplicationPhase {
   APPLIED = 'APPLIED',
   AI_SCREENING = 'AI_SCREENING',
+  SCREENING_FAILED = 'SCREENING_FAILED', // Lỗi kỹ thuật (S3/AI) khi sàng lọc - chờ HR bấm chấm điểm lại thủ công
   SHORTLISTED = 'SHORTLISTED', // High Tier (score >= 80)
   SAVED_POOL = 'SAVED_POOL', // Middle Tier (score 50 - 79)
   SCREENING_REJECTED = 'SCREENING_REJECTED', // Low Tier (score < 50)
@@ -90,4 +91,10 @@ export enum AiScreeningTier {
   HIGH = 'HIGH', // Auto-suggest to proceed
   MEDIUM = 'MEDIUM', // Reserved pool
   LOW = 'LOW', // Removed from active pipeline, kept for audit
+  NOT_AVAILABLE = 'N/A', // AI không chấm được (lỗi kỹ thuật / JD không đủ tiêu chí) - KHÔNG bao giờ lưu điểm mặc định
+}
+
+export enum CvStorageLocation {
+  S3 = 'S3',
+  LOCAL_PENDING = 'LOCAL_PENDING', // Upload S3 thất bại, tệp đang tạm lưu trên đĩa cục bộ chờ retry
 }

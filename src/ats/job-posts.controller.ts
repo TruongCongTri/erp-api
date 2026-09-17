@@ -39,7 +39,7 @@ export class JobPostsController {
   ) {}
 
   // ==========================================
-  // AI JD DRAFTING (GEMINI 3.6 FLASH)
+  // AI JD DRAFTING (Gemini or Claude — see AI_PROVIDER env)
   // ==========================================
   @Post('ai-suggest')
   @RequireAnyPermissions(
@@ -56,7 +56,7 @@ export class JobPostsController {
     return {
       success: true,
       data: suggestedData,
-      message: 'Soạn thảo JD bằng Gemini 3.6 Flash thành công',
+      message: 'Soạn thảo JD bằng AI thành công',
     };
   }
 

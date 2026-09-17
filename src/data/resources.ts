@@ -92,13 +92,23 @@ export const resourcesData = [
     slug: 'ats_job_post',
     name: 'ATS: Job Post & Publishing',
     description:
-      'AI JD authoring (Gemini), template cloning, multi-channel job dispatch, and scheduling (ats:jobs:*)',
+      'AI JD authoring (Gemini/Claude), template cloning, multi-channel job dispatch, and scheduling (ats:jobs:*)',
   },
   {
     slug: 'ats_candidate',
     name: 'ATS: Candidate & Pipeline',
     description:
       'Omnichannel applicant ingestion, AI 3-tier screening evaluation, Kanban pipeline, and candidate pools (ats:candidates:*)',
+  },
+
+  // =====================================
+  // 3B. PUBLISHING AUTOMATION (Isolated Browser-Automation Microservice)
+  // =====================================
+  {
+    slug: 'publishing_automation',
+    name: 'Publishing Automation (Facebook/TopCV/CareerViet)',
+    description:
+      'Facebook account & group management, job-to-group suitability matching, staggered scheduling, and per-channel automated job-posting status tracking via headless-browser workers (publishing_automation:*)',
   },
 
   // =====================================

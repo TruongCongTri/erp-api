@@ -2,6 +2,7 @@
 /dist
 /node_modules
 /build
+*.tsbuildinfo
 
 # Logs
 logs
@@ -46,6 +47,12 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+
+# Publishing automation error screenshots (local debug artifacts, may contain session state)
+/storage/automation-screenshots
+
+# Candidate CVs temporarily held on disk when S3 upload fails (contains PII, retried by cron)
+/storage/pending-cvs
 
 # Runtime data
 pids

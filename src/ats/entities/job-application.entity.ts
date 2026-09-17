@@ -75,4 +75,26 @@ export class JobApplication extends AuditableEntity {
 
   // @CreateDateColumn()
   // appliedAt!: Date;
+  // ─── Granular Evaluation Metrics ───
+
+  @Column({ name: 'scoring_breakdown', type: 'jsonb', nullable: true })
+  scoringBreakdown?: Record<string, unknown> | null;
+
+  @Column({ name: 'matching_skills', type: 'text', array: true, default: '{}' })
+  matchingSkills?: string[];
+
+  @Column({ name: 'missing_skills', type: 'text', array: true, default: '{}' })
+  missingSkills?: string[];
+
+  @Column({
+    name: 'experience_years_detected',
+    type: 'numeric',
+    precision: 4,
+    scale: 1,
+    nullable: true,
+  })
+  experienceYearsDetected?: number | null;
+
+  @Column({ name: 'red_flags', type: 'text', array: true, default: '{}' })
+  redFlags?: string[];
 }

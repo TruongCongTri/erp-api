@@ -11,6 +11,7 @@ import { AtsAiService } from './ats-ai.service';
 import { JobApplicationsService } from './job-applications.service';
 import { CvScreeningConsumer } from './cv-screening.consumer';
 import { CvScreeningListener } from './cv-screening.listener';
+import { CvRetentionCronService } from './cv-retention.cron';
 import { ATS_CV_SCREENING_QUEUE } from './ats.constants';
 import { CandidatesModule } from './candidates.module';
 @Module({
@@ -27,6 +28,7 @@ import { CandidatesModule } from './candidates.module';
     JobApplicationsService,
     CvScreeningConsumer,
     CvScreeningListener,
+    CvRetentionCronService,
   ],
   exports: [CvParserService, AtsAiService, BullModule],
 })

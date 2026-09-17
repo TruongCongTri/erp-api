@@ -76,5 +76,20 @@ export class CandidateScreeningRejectedEvent {
     public readonly aiReasoning: string,
     public readonly submissionId?: string | null,
     public readonly isCvPurged: boolean = true,
+    public readonly jobTitle?: string | null,
+    public readonly cvPurgeAt?: Date | null,
+  ) {}
+}
+
+// 7. AI chấm điểm CV ở mức trung bình (50 - 79 điểm) -> Đưa vào Kho dự trữ tiềm năng
+export class CandidatePooledEvent {
+  constructor(
+    public readonly applicationId: string,
+    public readonly candidateId: string,
+    public readonly jobPostId: string,
+    public readonly candidateName: string,
+    public readonly jobTitle: string,
+    public readonly aiScore: number,
+    public readonly submissionId?: string | null,
   ) {}
 }

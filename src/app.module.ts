@@ -35,6 +35,7 @@ import { DepartmentsModule } from './departments/departments.module';
 import { TicketModule } from './tickets/ticket.module';
 import { AtsModule } from './ats/ats.module';
 import { StorageModule } from './ats/storage.module';
+import { PublishingAutomationModule } from './publishing-automation/publishing-automation.module';
 // import { AuditLogModule } from './audit-log/audit-log.module';
 
 @Module({
@@ -49,6 +50,7 @@ import { StorageModule } from './ats/storage.module';
     CacheModule,
     MailModule,
     StorageModule,
+
     // 2. Database Connection using our Enterprise Factory
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -90,17 +92,51 @@ import { StorageModule } from './ats/storage.module';
     // 5. Importcentralized CronModule
     CronModule,
 
+    // local docker redis
+    // BullModule.forRootAsync({
+    //   imports: [ConfigModule],
+    //   useFactory: (configService: ConfigService) => ({
+    //     connection: {
+    //       host: configService.get<string>('REDIS_HOST', 'localhost'),
+    //       port: configService.get<number>('REDIS_PORT', 6379),
+    //       // password: configService.get('REDIS_PASSWORD'),
+    //     },
+    //   }),
+    //   inject: [ConfigService],
+    // }),
+
+    // Upstash-compatible BullMQ Connection
     BullModule.forRootAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        connection: {
-          host: configService.get<string>('REDIS_HOST', 'localhost'),
-          port: configService.get<number>('REDIS_PORT', 6379),
-          // password: configService.get('REDIS_PASSWORD'),
-        },
-      }),
       inject: [ConfigService],
+      useFactory: (configService: ConfigService) => {
+        const redisUrl = configService.get<string>('REDIS_URL');
+        const isTls =
+          configService.get<string>('REDIS_TLS') === 'true' ||
+          Boolean(redisUrl?.startsWith('rediss://'));
+
+        if (redisUrl) {
+          return {
+            connection: {
+              url: redisUrl,
+              tls: isTls ? { rejectUnauthorized: false } : undefined,
+              maxRetriesPerRequest: null, // Critical: BullMQ will crash without this set to null
+            },
+          };
+        }
+
+        return {
+          connection: {
+            host: configService.get<string>('REDIS_HOST', 'localhost'),
+            port: configService.get<number>('REDIS_PORT', 6379),
+            password: configService.get<string>('REDIS_PASSWORD') || undefined,
+            tls: isTls ? { rejectUnauthorized: false } : undefined,
+            maxRetriesPerRequest: null, // Critical: BullMQ will crash without this set to null
+          },
+        };
+      },
     }),
+
     // 6. Application Modules
     AuthModule,
     UsersModule,
@@ -115,6 +151,7 @@ import { StorageModule } from './ats/storage.module';
     AuditLogModule,
     TicketModule,
     AtsModule,
+    PublishingAutomationModule,
   ],
   controllers: [AppController],
   providers: [

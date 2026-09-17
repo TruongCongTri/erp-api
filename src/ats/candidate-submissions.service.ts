@@ -34,13 +34,28 @@ export class CandidateSubmissionsService {
     if (resolvedCvFileKey && !resolvedCvUrl) {
       resolvedCvUrl = this.s3StorageService.getFileUrl(resolvedCvFileKey);
     } else if (resolvedCvUrl && !resolvedCvFileKey) {
-      resolvedCvFileKey = resolvedCvUrl.split('/').slice(-3).join('/'); // Lấy đường dẫn key tương đối
+      // Chỉ suy ra fileKey khi cvUrl thực sự trỏ vào bucket S3 của hệ thống (không đoán mò
+      // bằng cách cắt chuỗi - CV dán link ngoài, ví dụ Google Drive/LinkedIn, không có fileKey).
+      resolvedCvFileKey =
+        this.s3StorageService.extractFileKeyFromUrl(resolvedCvUrl) ?? undefined;
     }
 
     if (!resolvedCvUrl && !resolvedCvFileKey) {
       throw new BadRequestException(
         'Hồ sơ nộp yêu cầu phải có tệp đính kèm (cvFileKey) hoặc đường dẫn CV (cvUrl).',
       );
+    }
+
+    // 0B. Nếu có fileKey trỏ vào S3 nội bộ, xác thực tệp thực sự tồn tại trước khi ingest.
+    // Chặn đứng trường hợp webhook/portal gửi cvFileKey/cvUrl giả (chưa từng upload thật),
+    // vốn từng khiến hồ sơ bị đẩy vào hàng đợi sàng lọc AI rồi mới lỗi NoSuchKey ở tận khâu đọc file.
+    if (resolvedCvFileKey) {
+      const exists = await this.s3StorageService.fileExists(resolvedCvFileKey);
+      if (!exists) {
+        throw new BadRequestException(
+          `Tệp CV với fileKey "${resolvedCvFileKey}" không tồn tại trong hệ thống lưu trữ. Vui lòng upload CV trước khi nộp hồ sơ.`,
+        );
+      }
     }
 
     // 1. Phân giải & khử trùng danh tính ứng viên
@@ -66,6 +81,7 @@ export class CandidateSubmissionsService {
         platformSource: dto.platformSource,
         cvUrl: resolvedCvUrl!,
         cvFileKey: resolvedCvFileKey!,
+        cvStorageLocation: dto.cvStorageLocation,
         externalApplicationId: dto.externalApplicationId,
         coverLetter: dto.coverLetter,
       },

@@ -1,9 +1,14 @@
-import { DataSource } from 'typeorm';
-import { ConfigService } from '@nestjs/config';
+import 'tsconfig-paths/register';
+import dataSource from '../config/typeorm.config'; // Direct import of the CLI DataSource
+
+// un-comment for local use
+// import { DataSource } from 'typeorm';
+// import { ConfigService } from '@nestjs/config';
+// import { typeOrmConfigFactory } from 'src/config/typeorm.config';
+
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { typeOrmConfigFactory } from 'src/config/typeorm.config';
 import { RecruitmentRequest } from 'src/ats/entities/recruitment-request.entity';
 import { JobPost } from 'src/ats/entities/job-post.entity';
 import { CandidateProfile } from 'src/ats/entities/candidate-profile.entity';
@@ -26,20 +31,20 @@ import {
 } from 'src/ats/enums/ats.enum';
 
 // ─── 1. MOCK CONFIG SERVICE TƯƠNG TỰ SEED.TS ──────────────────────────────────
-const mockConfigService = {
-  get: <T>(key: string, defaultValue?: T): T => {
-    const envValue = process.env[key];
-    if (envValue !== undefined) {
-      if (typeof defaultValue === 'number') {
-        return parseInt(envValue, 10) as unknown as T;
-      }
-      return envValue as unknown as T;
-    }
-    return defaultValue as T;
-  },
-} as unknown as ConfigService;
+// const mockConfigService = {
+//   get: <T>(key: string, defaultValue?: T): T => {
+//     const envValue = process.env[key];
+//     if (envValue !== undefined) {
+//       if (typeof defaultValue === 'number') {
+//         return parseInt(envValue, 10) as unknown as T;
+//       }
+//       return envValue as unknown as T;
+//     }
+//     return defaultValue as T;
+//   },
+// } as unknown as ConfigService;
 
-const dataSource = new DataSource(typeOrmConfigFactory(mockConfigService));
+// const dataSource = new DataSource(typeOrmConfigFactory(mockConfigService));
 
 // ─── 2. TYPE AN TOÀN CHO FILE DỮ LIỆU JSON ───────────────────────────────────
 interface SeedJobPostData {
@@ -105,12 +110,11 @@ interface AtsSeedFileContent {
   mockCandidates: SeedMockCandidateItem[];
 }
 
-// ─── 3. THỰC THI SEED ATS DATA ───────────────────────────────────────────────
 async function runAtsSeed() {
-  console.log('🌱 Khởi động ATS Production Seed (TypeORM Standalone)...');
+  console.log('🌱 Starting ATS Production Seed (TypeORM Standalone)...');
 
   await dataSource.initialize();
-  console.log('✅ Kết nối cơ sở dữ liệu thành công!');
+  console.log('✅ Database connected successfully!');
 
   const reqRepo = dataSource.getRepository(RecruitmentRequest);
   const jobPostRepo = dataSource.getRepository(JobPost);
@@ -120,60 +124,78 @@ async function runAtsSeed() {
   const deptRepo = dataSource.getRepository(Department);
   const userRepo = dataSource.getRepository(User);
 
-  // 1. Tìm tài khoản Super Admin làm người tạo mặc định
+  // 1. Resolve Admin User
   const adminUser =
     (await userRepo.findOne({ where: { email: 'superadmin@chinhnam.vn' } })) ||
     (await userRepo.findOne({ where: {} }));
 
-  // 2. Tìm và đọc file dữ liệu JSON
-  let dataPath = path.join(process.cwd(), 'stc/data', 'ats.json');
-  if (!fs.existsSync(dataPath)) {
-    dataPath = path.join(process.cwd(), 'src/data', 'ats.json');
+  if (!adminUser) {
+    console.warn(
+      '⚠️ No user found in database. Run the primary seed.ts script first.',
+    );
   }
-  if (!fs.existsSync(dataPath)) {
-    throw new Error(`Không tìm thấy file dữ liệu seed tại: ${dataPath}`);
+
+  // 2. Pre-fetch all departments to prevent UUID parsing errors and remote N+1 queries
+  const allDepartments = await deptRepo.find();
+  if (allDepartments.length === 0) {
+    throw new Error(
+      'No departments found. Please run the primary seed.ts script first.',
+    );
+  }
+
+  const findDepartment = (identifier: string): Department => {
+    const cleanId = (identifier || '').trim().toLowerCase();
+    const matched = allDepartments.find(
+      (d) =>
+        d.id.toLowerCase() === cleanId ||
+        d.slug?.toLowerCase() === cleanId ||
+        d.code?.toLowerCase() === cleanId ||
+        d.name?.toLowerCase() === cleanId,
+    );
+    return matched || allDepartments[0];
+  };
+
+  // 3. Locate and Parse JSON Data File
+  const possiblePaths = [
+    path.join(process.cwd(), 'src/data', 'ats.json'),
+    path.join(process.cwd(), 'data', 'ats.json'),
+  ];
+  const dataPath = possiblePaths.find((p) => fs.existsSync(p));
+
+  if (!dataPath) {
+    throw new Error(
+      `Could not locate ats.json in: ${possiblePaths.join(' or ')}`,
+    );
   }
 
   const seedRaw = fs
     .readFileSync(dataPath, 'utf-8')
     .replace(/^\uFEFF/, '')
     .trim();
-
   let seedData: AtsSeedFileContent;
   try {
     seedData = JSON.parse(seedRaw) as AtsSeedFileContent;
-  } catch (parseErr: unknown) {
-    const message =
-      parseErr instanceof Error ? parseErr.message : String(parseErr);
-    throw new Error(`Lỗi cú pháp JSON trong file ${dataPath}: ${message}`);
+  } catch (parseErr) {
+    throw new Error(
+      `JSON syntax error in ${dataPath}: ${(parseErr as Error).message}`,
+    );
   }
 
   const savedJobPostMap: Record<string, JobPost> = {};
 
-  // 3. Khởi tạo Yêu cầu Tuyển dụng & Xuất bản Job Posts
+  // 4. Seed Recruitment Requests & Published Job Posts
   console.log('🏢 [1/2] Seeding Recruitment Requests & Published Job Posts...');
   for (const item of seedData.recruitmentRequests) {
-    const randHex = Math.floor(1000 + Math.random() * 9000)
-      .toString(16)
-      .toUpperCase();
+    const randHex = Math.random().toString(36).substring(2, 7).toUpperCase();
     const requestCode = `REQ-2026-${randHex}`;
     const jobCode = `JOB-2026-${randHex}`;
 
-    // Đối chiếu phòng ban
-    let dept: Department | null = await deptRepo.findOneBy({
-      id: item.departmentId,
-    });
-    if (!dept) {
-      dept = await deptRepo.findOneBy({});
-    }
+    const targetDept = findDepartment(item.departmentId);
 
-    const resolvedDepartmentId = dept?.id || item.departmentId;
-
-    // Tạo Recruitment Request
     let reqEntity = reqRepo.create({
       requestCode,
       rawRequestNote: item.rawRequestNote,
-      departmentId: resolvedDepartmentId,
+      departmentId: targetDept.id,
       status: RecruitmentRequestStatus.APPROVED,
       requesterId: adminUser?.id,
       createdBy: adminUser?.id,
@@ -181,7 +203,6 @@ async function runAtsSeed() {
     });
     reqEntity = await reqRepo.save(reqEntity);
 
-    // Tạo Job Post (24 tiêu chuẩn + Đa kênh)
     let jobEntity = jobPostRepo.create({
       recruitmentRequestId: reqEntity.id,
       jobCode,
@@ -228,17 +249,22 @@ async function runAtsSeed() {
       },
       createdBy: adminUser?.id,
       createdByName: adminUser?.fullName || 'Super Admin',
+      applicationsCount: 0,
     });
+
     jobEntity = await jobPostRepo.save(jobEntity);
     savedJobPostMap[item.key] = jobEntity;
 
-    console.log(`  ✅ Đã xuất bản: [${jobCode}] ${item.jobPost.publicTitle}`);
+    console.log(`  ✅ Published: [${jobCode}] ${item.jobPost.publicTitle}`);
   }
 
-  // 4. Khởi tạo 4 Mock Candidates & Đơn ứng tuyển đa kênh & AI Evaluation
+  // 5. Seed Candidates & Applications
   console.log(
     '🧑‍💻 [2/2] Seeding Candidates, Cross-Platform Applications & AI Scoring...',
   );
+
+  const submissionsToInsert: ApplicationSubmission[] = [];
+
   for (const cData of seedData.mockCandidates) {
     const normalizedEmail = cData.email.trim().toLowerCase();
     const normalizedPhone = cData.phoneNumber.trim().replace(/\s+/g, '');
@@ -274,38 +300,46 @@ async function runAtsSeed() {
           aiScore: appItem.aiScore,
           aiTier: appItem.aiTier,
           aiReasoning: appItem.aiReasoning,
-          internalHrNotes: `Hồ sơ tự động đánh giá bởi AI Screening: ${appItem.aiScore}/100đ. Phân loại: ${appItem.aiTier}`,
+          internalHrNotes: `AI Screening evaluation: ${appItem.aiScore}/100. Tier: ${appItem.aiTier}`,
         });
         application = await appRepo.save(application);
 
-        const submission = submissionRepo.create({
-          applicationId: application.id,
-          platformSource: appItem.platformSource,
-          cvUrl: appItem.cvUrl,
-          externalApplicationId: `ext_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-          coverLetter: `Kính gửi Ban Tuyển dụng Chính Nam, tôi là ${cData.fullName}, rất mong muốn được đóng góp năng lực vào dự án.`,
-        });
-        await submissionRepo.save(submission);
+        const uniqueSuffix = `${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
+        submissionsToInsert.push(
+          submissionRepo.create({
+            applicationId: application.id,
+            platformSource: appItem.platformSource,
+            cvUrl: appItem.cvUrl,
+            externalApplicationId: `ext_${uniqueSuffix}`,
+            coverLetter: `Kính gửi Ban Tuyển dụng Chính Nam, tôi là ${cData.fullName}, rất mong muốn được đóng góp năng lực vào dự án.`,
+          }),
+        );
 
-        // await jobPostRepo.increment(
-        //   { id: targetJob.id },
-        //   'applicationsCount',
-        //   1,
-        // );
+        // Increment in-memory (bulk saved after loop)
         targetJob.applicationsCount = (targetJob.applicationsCount || 0) + 1;
-        await jobPostRepo.save(targetJob);
+
         console.log(
-          `  🎯 [${cData.fullName}] -> Nộp "${targetJob.publicTitle}" qua [${appItem.platformSource}] | Điểm AI: ${appItem.aiScore} -> ${appItem.promotedPhase}`,
+          `  🎯 [${cData.fullName}] -> Applied to "${targetJob.publicTitle}" via [${appItem.platformSource}] | Score: ${appItem.aiScore}`,
         );
       }
     }
   }
 
+  // Bulk save submissions and updated application counts
+  if (submissionsToInsert.length > 0) {
+    await submissionRepo.save(submissionsToInsert, { chunk: 50 });
+  }
+
+  const jobsToUpdate = Object.values(savedJobPostMap);
+  if (jobsToUpdate.length > 0) {
+    await jobPostRepo.save(jobsToUpdate, { chunk: 50 });
+  }
+
   await dataSource.destroy();
-  console.log('🎉 Hoàn tất Seeding ATS Production thành công!');
+  console.log('🎉 ATS Production Seeding Complete!');
 }
 
 runAtsSeed().catch((err) => {
-  console.error('❌ ATS Seeding thất bại:', err);
+  console.error('❌ ATS Seeding failed:', err);
   process.exit(1);
 });

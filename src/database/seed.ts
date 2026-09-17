@@ -1,9 +1,13 @@
 // src/database/seed.ts
-import { DataSource } from 'typeorm';
+import 'tsconfig-paths/register';
+import dataSource from '../config/typeorm.config'; // Direct import of the CLI DataSource
+
+// un-comment for local use
+// import { DataSource } from 'typeorm';
+// import { typeOrmConfigFactory } from '../config/typeorm.config';
+// import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import Redis from 'ioredis';
-import { typeOrmConfigFactory } from '../config/typeorm.config';
-import { ConfigService } from '@nestjs/config';
 import { SystemResource } from '../resources/entities/system-resource.entity';
 import { Permission } from '../permissions/entities/permission.entity';
 import { Role } from '../roles/entities/role.entity';
@@ -22,20 +26,20 @@ import { departmentsData } from 'src/data/departments';
 import { Department } from 'src/departments/entities/department.entity';
 
 // A mock ConfigService to satisfy the TypeORM Factory outside of NestJS
-const mockConfigService = {
-  get: <T>(key: string, defaultValue?: T): T => {
-    const envValue = process.env[key];
-    if (envValue !== undefined) {
-      if (typeof defaultValue === 'number') {
-        return parseInt(envValue, 10) as unknown as T;
-      }
-      return envValue as unknown as T;
-    }
-    return defaultValue as T;
-  },
-} as unknown as ConfigService;
+// const mockConfigService = {
+//   get: <T>(key: string, defaultValue?: T): T => {
+//     const envValue = process.env[key];
+//     if (envValue !== undefined) {
+//       if (typeof defaultValue === 'number') {
+//         return parseInt(envValue, 10) as unknown as T;
+//       }
+//       return envValue as unknown as T;
+//     }
+//     return defaultValue as T;
+//   },
+// } as unknown as ConfigService;
 
-const dataSource = new DataSource(typeOrmConfigFactory(mockConfigService));
+// const dataSource = new DataSource(typeOrmConfigFactory(mockConfigService));
 
 function expandPermissionWildcards(
   permString: string,
@@ -69,31 +73,53 @@ function expandPermissionWildcards(
 async function runSeed() {
   console.log('🌱 Starting Database Seed...');
 
-  // A. Clear the Redis Cache
+  // A. Clear Redis Cache
   console.log('🧹 Clearing Redis cache to prevent stale UUIDs...');
-  const redis = new Redis({
-    host: process.env.REDIS_HOST || 'localhost',
-    port: parseInt(process.env.REDIS_PORT || '6379'),
-    password: process.env.REDIS_PASSWORD || undefined,
-  });
+  // const redis = new Redis({
+  //   host: process.env.REDIS_HOST || 'localhost',
+  //   port: parseInt(process.env.REDIS_PORT || '6379', 10),
+  //   password: process.env.REDIS_PASSWORD || undefined,
+  // });
+  const isTls =
+    process.env.REDIS_TLS === 'true' ||
+    !!process.env.REDIS_URL?.startsWith('rediss://');
 
-  await redis.flushdb();
-  await redis.quit();
-  console.log('✨ Redis cache completely cleared!');
+  const redis = process.env.REDIS_URL
+    ? new Redis(process.env.REDIS_URL, {
+        tls: isTls ? {} : undefined,
+      })
+    : new Redis({
+        host: process.env.REDIS_HOST || 'localhost',
+        port: parseInt(process.env.REDIS_PORT || '6379', 10),
+        password: process.env.REDIS_PASSWORD || undefined,
+        tls: isTls ? {} : undefined,
+      });
 
-  // B. Wipe and Rebuild PostgreSQL Database
+  try {
+    await redis.flushdb();
+    console.log('✨ Redis cache cleared!');
+  } catch (err) {
+    console.warn('⚠️ Redis flush skipped:', (err as Error).message);
+  } finally {
+    await redis.quit();
+  }
+
+  // B. Initialize Connection and Reset Public Schema on Supabase
   await dataSource.initialize();
-  console.log('🧹 Dropping existing database schema...');
+  console.log('🧹 Resetting public schema on Supabase...');
 
   await dataSource.query(`
     DROP SCHEMA public CASCADE; 
     CREATE SCHEMA public; 
+    GRANT ALL ON SCHEMA public TO postgres;
+    GRANT ALL ON SCHEMA public TO public;
+    COMMENT ON SCHEMA public IS 'standard public schema';
     CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
   `);
 
-  // 3. Rebuild schema directly from Entities
+  // C. Rebuild Schema from Entities
   console.log('🏗️ Rebuilding database schema from Entities...');
-  await dataSource.synchronize(); // ✅ THE MAGIC FIX: Reads your TS Entities directly!
+  await dataSource.synchronize();
   console.log('✅ Database schema rebuilt successfully!');
 
   const resourceRepo = dataSource.getRepository(SystemResource);
@@ -104,26 +130,35 @@ async function runSeed() {
   const identityRepo = dataSource.getRepository(CitizenIdentityCard);
   const departmentRepo = dataSource.getRepository(Department);
 
-  // 1. Seed Resources
-  console.log('📦 Seeding System Resources...');
-  const savedResources: Record<string, SystemResource> = {};
-  for (const rData of resourcesData) {
-    let res = await resourceRepo.findOneBy({ slug: rData.slug });
-    if (!res) {
-      res = resourceRepo.create({ ...rData, isLive: true });
-      await resourceRepo.save(res);
+  // 1. Bulk Seed Resources (Deduplicated by slug)
+  console.log('📦 Deduplicating and bulk seeding System Resources...');
+  const uniqueResourcesMap = new Map<string, (typeof resourcesData)[0]>();
+  for (const r of resourcesData) {
+    if (!uniqueResourcesMap.has(r.slug)) {
+      uniqueResourcesMap.set(r.slug, r);
     }
-    savedResources[res.slug] = res;
+  }
+
+  const resourcesToCreate = Array.from(uniqueResourcesMap.values()).map((r) =>
+    resourceRepo.create({ ...r, isLive: true }),
+  );
+  const savedResourcesList = await resourceRepo.save(resourcesToCreate, {
+    chunk: 100,
+  });
+
+  const savedResources: Record<string, SystemResource> = {};
+  for (const r of savedResourcesList) {
+    savedResources[r.slug] = r;
   }
   const allResourceSlugs = Object.keys(savedResources);
+  console.log(`✅ Seeded ${savedResourcesList.length} distinct resources.`);
 
-  // 2. Generate and Map Permissions
-  console.log('🔑 Generating Permissions from Matrix...');
-  const rolePermissionMap: Record<string, Permission[]> = {};
+  // 2. Pre-calculate and Bulk Seed Unique Permissions
+  console.log('🔑 Pre-calculating distinct permissions across all roles...');
+  const allUniquePermSlugs = new Set<string>();
+  const roleSlugToPermSlugsMap: Record<string, string[]> = {};
 
   for (const roleDef of rolesMatrix) {
-    rolePermissionMap[roleDef.slug] = [];
-
     const enhancedPerms = [
       ...roleDef.perms,
       'news_feed:read:any',
@@ -139,132 +174,146 @@ async function runSeed() {
       ),
     );
 
-    for (const permSlug of concreteSlugs) {
-      const [rSlug, actionString, scopeString] = permSlug.split(':');
-      const resource = savedResources[rSlug];
-      if (!resource) continue;
+    roleSlugToPermSlugsMap[roleDef.slug] = Array.from(concreteSlugs);
+    concreteSlugs.forEach((slug) => allUniquePermSlugs.add(slug));
+  }
 
-      const actionEnum = actionString as PermissionAction;
-      const scopeEnum = scopeString as PermissionScope;
+  console.log(
+    `⚡ Bulk inserting ${allUniquePermSlugs.size} unique permissions...`,
+  );
+  const permissionsToInsert: Permission[] = [];
 
-      let perm = await permissionRepo.findOne({
-        where: {
-          action: actionEnum,
-          scope: scopeEnum,
-          resource: { id: resource.id },
-        },
-      });
+  for (const permSlug of allUniquePermSlugs) {
+    const [rSlug, actionString, scopeString] = permSlug.split(':');
+    const resource = savedResources[rSlug];
+    if (!resource) continue;
 
-      if (!perm) {
-        perm = permissionRepo.create({
-          slug: permSlug,
-          name: `${actionString} ${rSlug}`,
-          description: `Allows ${actionString} on ${rSlug} (${scopeString})`,
-          action: actionEnum,
-          scope: scopeEnum,
-          isLive: true,
-          resource: resource,
-        } as Permission);
+    permissionsToInsert.push(
+      permissionRepo.create({
+        slug: permSlug,
+        name: `${actionString} ${rSlug}`,
+        description: `Allows ${actionString} on ${rSlug} (${scopeString})`,
+        action: actionString as PermissionAction,
+        scope: scopeString as PermissionScope,
+        isLive: true,
+        resource: resource,
+      } as Permission),
+    );
+  }
 
-        await permissionRepo.save(perm);
-      }
-      rolePermissionMap[roleDef.slug].push(perm);
+  const savedPermissionsList = await permissionRepo.save(permissionsToInsert, {
+    chunk: 100,
+  });
+
+  const permissionBySlugMap = new Map<string, Permission>();
+  for (const p of savedPermissionsList) {
+    permissionBySlugMap.set(p.slug, p);
+  }
+  console.log('✅ Permissions generated and indexed in memory!');
+
+  // 3. Seed Roles with Mapped Permissions (Deduplicated by slug)
+  console.log('🛡️ Seeding Roles...');
+  let superAdminRole: Role | null = null;
+  const uniqueRolesMap = new Map<string, (typeof rolesMatrix)[0]>();
+  for (const r of rolesMatrix) {
+    if (!uniqueRolesMap.has(r.slug)) {
+      uniqueRolesMap.set(r.slug, r);
     }
   }
 
-  // ==========================================
-  // 3. Seed Roles
-  // ==========================================
-  console.log('🛡️ Seeding Roles...');
-  let superAdminRole: Role | null = null;
+  const rolesToSave: Role[] = [];
+  for (const roleDef of uniqueRolesMap.values()) {
+    const targetPermSlugs = roleSlugToPermSlugsMap[roleDef.slug] || [];
+    const assignedPermissions: Permission[] = [];
 
-  for (const roleDef of rolesMatrix) {
-    let role = await roleRepo.findOneBy({ slug: roleDef.slug });
-    if (!role) {
-      role = roleRepo.create({
-        slug: roleDef.slug,
-        name: roleDef.name,
-        // description: `System generated role for ${roleDef.name}`,
-        isLive: true,
-        isDefault: false,
-      });
+    for (const slug of targetPermSlugs) {
+      const matched = permissionBySlugMap.get(slug);
+      if (matched) assignedPermissions.push(matched);
     }
 
-    role.permissions = rolePermissionMap[roleDef.slug];
-    await roleRepo.save(role);
+    rolesToSave.push(
+      roleRepo.create({
+        slug: roleDef.slug,
+        name: roleDef.name,
+        isLive: true,
+        isDefault: false,
+        permissions: assignedPermissions,
+      }),
+    );
+  }
 
+  const savedRoles = await roleRepo.save(rolesToSave);
+  for (const role of savedRoles) {
     if (role.slug === 'SUPER_ADMIN') {
       superAdminRole = role;
     }
   }
+  console.log(`✅ Seeded ${savedRoles.length} roles with permissions.`);
 
-  // ==========================================
-  // 4. Seed Departments (Hierarchical)
-  // ==========================================
-  console.log('🏢 Seeding Departments (Organization Tree)...');
+  // 4. Seed Departments (Hierarchical, Deduplicated by slug)
+  console.log('🏢 Seeding Departments...');
+  const uniqueDeptsMap = new Map<string, (typeof departmentsData)[0]>();
+  for (const d of departmentsData) {
+    if (!uniqueDeptsMap.has(d.slug)) {
+      uniqueDeptsMap.set(d.slug, d);
+    }
+  }
+
   const savedDepts: Record<string, Department> = {};
-
-  // Pass 1: Insert all departments without parents to establish IDs
-  for (const dData of departmentsData) {
+  for (const dData of uniqueDeptsMap.values()) {
     const dept = departmentRepo.create({
       slug: dData.slug,
       code: dData.code,
       name: dData.name,
       isActive: true,
-      // createdBy: null,
     });
     const saved = await departmentRepo.save(dept);
     savedDepts[dData.slug] = saved;
   }
 
-  // Pass 2: Re-link parents to build the hierarchy tree
-  for (const dData of departmentsData) {
+  for (const dData of uniqueDeptsMap.values()) {
     if (dData.parentSlug && savedDepts[dData.parentSlug]) {
       const child = savedDepts[dData.slug];
       child.parentId = savedDepts[dData.parentSlug].id;
-      // Tránh query TypeORM phức tạp, gán ID trực tiếp cho cột parent_id
       await departmentRepo.update(child.id, { parentId: child.parentId });
     }
   }
-  console.log(`✅ Successfully seeded ${departmentsData.length} Departments!`);
+  console.log(`✅ Seeded ${Object.keys(savedDepts).length} Departments!`);
 
-  // ==========================================
   // 5. Seed Profiles and Users
-  // ==========================================
-  console.log('👥 Seeding Employee Profiles (Waiting to be claimed)...');
-
+  console.log('👥 Seeding Employee Profiles and Accounts...');
   const defaultPassword = await bcrypt.hash('ChinhNam@2026', 10);
   let seededCount = 0;
 
   const autoProvisionUserRoles = [
     'SUPER_ADMIN',
-    'DIR_HR_ADMIN', // 1 HR user
-    'HEAD_ARCHITECTURE', // 1 Department Head
+    'DIR_HR_ADMIN',
+    'HEAD_ARCHITECTURE',
   ];
 
-  for (const emp of employeeRoster) {
-    const assignedRole = await roleRepo.findOneBy({ slug: emp.roleSlug });
+  for (let i = 0; i < employeeRoster.length; i++) {
+    const emp = employeeRoster[i];
+    const cleanEmployeeCode = emp.employeeCode.trim();
+
+    const assignedRole = savedRoles.find((r) => r.slug === emp.roleSlug);
     const finalRole =
       assignedRole ||
-      (await roleRepo.findOneBy({ slug: 'OPERATOR' })) ||
+      savedRoles.find((r) => r.slug === 'OPERATOR') ||
       superAdminRole;
 
-    const matchedDept: Department | undefined = Object.values(savedDepts).find(
-      (d) => d.name === emp.department || d.slug === emp.department,
+    const targetDeptName = emp.department?.trim().toLowerCase();
+    const matchedDept = Object.values(savedDepts).find(
+      (d) =>
+        d.name?.trim().toLowerCase() === targetDeptName ||
+        d.slug?.trim().toLowerCase() === targetDeptName,
     );
 
-    // 1. Generate unique CCCD/CMND Number (Mocking a 12-digit ID)
-    const numericPart = emp.employeeCode.replace(/[^0-9]/g, '');
-    const randomPad = Math.floor(100000 + Math.random() * 900000).toString();
-    const uniqueCccd = `${numericPart}${randomPad}`
-      .padStart(12, '0')
-      .slice(-12);
+    const deterministicCccd = `079${String(i + 1).padStart(9, '0')}`;
 
-    // 2. Create the Identity Card
     const identityCard = identityRepo.create({
-      cccdNumber: uniqueCccd,
-      fullName: emp.fullName,
-      dateOfBirth: new Date('1990-01-01'), // Generic for mock
+      cccdNumber: deterministicCccd,
+      fullName: emp.fullName.trim(),
+      dateOfBirth: new Date('1992-01-01'),
       gender: Gender.MALE,
       nationality: 'Việt Nam',
       placeOfOrigin: 'TP. Hồ Chí Minh',
@@ -273,234 +322,44 @@ async function runSeed() {
       dateOfExpiry: new Date('2040-01-01'),
       placeOfIssue: 'Cục Cảnh sát QLHC về TTXH',
     });
+    const savedIdentity = await identityRepo.save(identityCard);
 
-    // 3. Create the Employee Profile (Orphaned by default)
-    // Note: Because we wipe the DB every time, we don't need random employeeCode suffixes anymore.
     const profile = profileRepo.create({
-      employeeCode: emp.employeeCode, // Clean code (e.g. A00-000, CN-XD.2608)
-      jobTitle: emp.jobTitle,
+      employeeCode: cleanEmployeeCode,
+      jobTitle: emp.jobTitle.trim(),
       designatedDepartment: matchedDept,
       designatedRole: finalRole as Role,
       isLive: true,
       joinDate: new Date('2026-01-01'),
-
-      // Core Demographics
-      dateOfBirth: new Date('1990-01-01'),
+      dateOfBirth: new Date('1992-01-01'),
       gender: 'Nam',
       phoneNumber: '0900000000',
       permanentAddress: 'TP. Hồ Chí Minh',
-      identityCard: identityCard, // Cascades automatically
+      identityCard: savedIdentity,
     });
+    const savedProfile = await profileRepo.save(profile);
 
-    // 4. Check if the employee's role is in our auto-provision list
     if (autoProvisionUserRoles.includes(emp.roleSlug)) {
-      let user = await userRepo.findOneBy({ email: emp.email });
-      if (!user) {
-        user = userRepo.create({
-          email: emp.email,
-          fullName: emp.fullName,
-          passwordHash: defaultPassword,
-          status: UserStatus.ACTIVE,
-          role: finalRole as Role,
-          departmentId: matchedDept ? matchedDept.id : null,
-        });
+      const user = userRepo.create({
+        email: emp.email.trim(),
+        fullName: emp.fullName.trim(),
+        passwordHash: defaultPassword,
+        status: UserStatus.ACTIVE,
+        role: finalRole as Role,
+        departmentId: matchedDept ? matchedDept.id : null,
+        profile: savedProfile,
+      });
 
-        // Link the profile to the User (Making them fully registered)
-        user.profile = profile;
-        await userRepo.save(user);
-        console.log(
-          `✅ Auto-created user account: ${emp.email} [${emp.roleSlug}]`,
-        );
-      }
-    } else {
-      // 5. For everyone else, just save the Profile to the DB.
-      // It sits waiting for a GUEST user to claim it.
-      await profileRepo.save(profile);
+      await userRepo.save(user);
+      console.log(
+        `✅ Auto-created account: [${cleanEmployeeCode}] ${emp.email}`,
+      );
     }
+
     seededCount++;
   }
 
-  console.log(`✅ Successfully seeded ${seededCount} profiles for claiming!`);
-
-  // // 6. Seed ATS Data (Jobs & Requests)
-  // console.log('🏢 Seeding ATS Job Requests and Job Posts...');
-
-  // // Pre-fetch the HR Admin so we can assign them as the creator of the JobPosts
-  // const hrAdmin = await userRepo.findOneBy({
-  //   email: 'superadmin@chinhnam.vn',
-  // });
-
-  // if (hrAdmin) {
-  //   for (const [index, data] of jobRequestSeedData.entries()) {
-  //     // Find the specific requester based on the email in the mock data
-  //     const requester =
-  //       (await userRepo.findOneBy({ email: data.requesterEmail })) || hrAdmin;
-
-  //     // 1. Create the Recruitment Request
-  //     const request = requestRepo.create({
-  //       jobTitle: data.jobTitle,
-  //       department: data.department,
-  //       headcount: data.headcount,
-  //       targetSalaryMin: data.targetSalaryMin,
-  //       targetSalaryMax: data.targetSalaryMax,
-  //       rawRequirements: data.rawRequirements,
-  //       reasonForHiring: data.reasonForHiring,
-  //       companyBenefits: data.companyBenefits,
-  //       aiDraftedDescription: data.aiDraftedDescription,
-  //       deadline: data.deadline,
-  //       level: data.level,
-  //       jobType: data.jobType,
-  //       workingModel: data.workingModel,
-  //       location: data.location,
-  //       workingHours: data.workingHours,
-  //       experienceYears: data.experienceYears,
-  //       educationLevel: data.educationLevel,
-  //       gender: data.gender,
-  //       ageRange: data.ageRange,
-  //       mustHaveSkills: data.mustHaveSkills,
-  //       niceToHaveSkills: data.niceToHaveSkills,
-  //       languages: data.languages,
-
-  //       status: RecruitmentRequestStatus.APPROVED, // All set to approved for easy testing
-  //       requester: requester,
-  //       createdBy: requester.id,
-  //       createdByName: requester.fullName,
-  //     });
-  //     await requestRepo.save(request);
-
-  //     // 2. Build the external mapping for job boards
-  //     // Every job gets these 5 standard boards:
-  //     const mapping: Record<string, string> = {
-  //       linkedin: `ln-mock-${index}`,
-  //       topcv: `topcv-mock-${index}`,
-  //       careerviet: `cv-mock-${index}`,
-  //       vietnamworks: `vnw-mock-${index}`,
-  //       vieclam24h: `vl24h-mock-${index}`,
-  //     };
-
-  //     // If it's an IT job, append ITviec
-  //     if (data.isItJob) {
-  //       mapping['itviec'] = `itviec-mock-${index}`;
-  //     }
-
-  //     // Safe Salary Formatting
-  //     const formattedSalary =
-  //       data.targetSalaryMin && data.targetSalaryMax
-  //         ? `${data.targetSalaryMin / 1000000} - ${data.targetSalaryMax / 1000000} Triệu VNĐ`
-  //         : 'Thỏa thuận';
-
-  //     // 3. Create the Published Job Post
-  //     const jobPost = jobPostRepo.create({
-  //       publicTitle: request.jobTitle,
-  //       aiDraftedDescription: request.aiDraftedDescription,
-  //       companyBenefits: request.companyBenefits,
-  //       status: JobPostStatus.PUBLISHED,
-  //       headcount: data.headcount,
-  //       deadline: data.deadline,
-  //       level: data.level,
-  //       jobType: data.jobType,
-  //       workingModel: data.workingModel,
-  //       location: data.location,
-  //       workingHours: data.workingHours,
-  //       experienceYears: data.experienceYears,
-  //       educationLevel: data.educationLevel,
-  //       gender: data.gender,
-  //       ageRange: data.ageRange,
-  //       mustHaveSkills: data.mustHaveSkills,
-  //       niceToHaveSkills: data.niceToHaveSkills,
-  //       languages: data.languages,
-  //       publicSalaryDisplay: formattedSalary,
-  //       hrContactName: hrAdmin.fullName,
-  //       hrContactEmail: hrAdmin.email,
-  //       hrContactPhone: '0988777666', // Mock HR phone number
-
-  //       externalMapping: mapping,
-  //       request: request,
-  //       createdBy: hrAdmin.id,
-  //       createdByName: hrAdmin.fullName,
-  //     });
-  //     await jobPostRepo.save(jobPost);
-  //   }
-  //   console.log(
-  //     `✅ Successfully seeded 10 Recruitment Requests & Job Posts with External Mappings!`,
-  //   );
-  // } else {
-  //   console.warn('⚠️ Skipped ATS Seeding: Could not find HR Admin test user.');
-  // }
-
-  // ==========================================
-  // 7. Seed Candidates, Applications & Submissions
-  // ==========================================
-  // console.log('🧑‍💻 Seeding Candidates and Job Applications across platforms...');
-
-  // // 1. Fetch all the Job Posts we just created (Need the relations to know the department)
-  // const allJobPosts = await jobPostRepo.find({
-  //   relations: { request: true },
-  // });
-
-  // if (allJobPosts.length > 0) {
-  //   // 2. Generate the massive JSON mock data using our helper
-  //   const candidatesMocks = generateCandidateSeedData(allJobPosts);
-
-  //   // 3. Save everything to the database
-  //   for (const mockCand of candidatesMocks) {
-  //     // A. Save the Candidate
-  //     const candidate = candidateProfileRepo.create({
-  //       fullName: mockCand.fullName,
-  //       email: mockCand.email,
-  //       phoneNumber: mockCand.phoneNumber,
-  //       linkedInUrl: mockCand.linkedInUrl,
-  //       cvReferences: mockCand.cvReferences,
-  //     });
-  //     const savedCandidate = await candidateProfileRepo.save(candidate);
-
-  //     // B. Save their Applications
-  //     for (const mockApp of mockCand.applications as unknown as SeedApplication[]) {
-  //       // 1. Find the exact JobPost reference
-  //       const jobPostRef = allJobPosts.find((j) => j.id === mockApp.jobPostId);
-
-  //       // 2. Create the entity with ONLY standard columns
-  //       const application = applicationRepo.create({
-  //         status: mockApp.status,
-  //         aiScore: mockApp.aiScore,
-  //         aiReasoning: mockApp.aiReasoning,
-  //       });
-
-  //       // 3. FOOLPROOF RELATION ASSIGNMENT: Assign relations directly to the instance
-  //       application.candidate = savedCandidate;
-  //       if (jobPostRef) {
-  //         application.jobPost = jobPostRef;
-  //       }
-
-  //       // 4. Save to database
-  //       const savedApp = await applicationRepo.save(application);
-
-  //       // C. Save the multiple Submissions (Platforms) for this application
-  //       const submissions = mockApp.submissions.map((sub) => {
-  //         const submission = submissionRepo.create({
-  //           platformSource: sub.platformSource,
-  //           externalApplicationId: sub.externalApplicationId,
-  //           coverLetter: sub.coverLetter,
-  //           cvUrl: sub.cvUrl,
-  //           cvFileKey: sub.cvFileKey,
-  //         });
-
-  //         // Direct assignment for submission relation too
-  //         submission.application = savedApp;
-  //         return submission;
-  //       });
-
-  //       // Save all submissions for this application in bulk
-  //       await submissionRepo.save(submissions);
-  //     }
-  //   }
-
-  //   console.log(
-  //     `✅ Successfully seeded 70 Candidates and thousands of cross-platform Submissions!`,
-  //   );
-  // } else {
-  //   console.warn('⚠️ Skipped Candidate Seeding: No Job Posts found.');
-  // }
+  console.log(`✅ Successfully seeded ${seededCount} profiles!`);
   await dataSource.destroy();
   console.log('🎉 Seeding Complete!');
 }

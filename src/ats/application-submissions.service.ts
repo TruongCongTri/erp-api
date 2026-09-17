@@ -2,13 +2,18 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { ApplicationSubmission } from './entities/application-submission.entity';
-import { ApplicationPhase, PlatformSource } from './enums/ats.enum';
+import {
+  ApplicationPhase,
+  PlatformSource,
+  CvStorageLocation,
+} from './enums/ats.enum';
 import { JobApplication } from './entities/job-application.entity';
 
 export interface CreateSubmissionPayload {
   platformSource: PlatformSource;
   cvUrl: string;
   cvFileKey?: string | null;
+  cvStorageLocation?: CvStorageLocation;
   externalApplicationId?: string | null;
   coverLetter?: string | null;
 }
@@ -32,6 +37,7 @@ export class ApplicationSubmissionsService {
       platformSource: payload.platformSource,
       cvUrl: payload.cvUrl,
       cvFileKey: payload.cvFileKey ?? null,
+      cvStorageLocation: payload.cvStorageLocation ?? CvStorageLocation.S3,
       externalApplicationId: payload.externalApplicationId ?? null,
       coverLetter: payload.coverLetter ?? null,
     });

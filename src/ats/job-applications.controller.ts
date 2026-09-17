@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Patch,
+  Post,
+  Delete,
   Param,
   Body,
   Query,
@@ -30,7 +32,14 @@ export class JobApplicationsController {
   constructor(private readonly applicationsService: JobApplicationsService) {}
 
   @Get('jobs/:jobPostId/applications')
-  @RequireAnyPermissions('ats:candidates:read', 'ats:jobs:read')
+  @RequireAnyPermissions(
+    'ats_candidate:read:any',
+    'ats_candidate:read:dept',
+    'ats_job_post:read:any',
+    'ats_job_post:read:dept',
+    'ats:candidates:read',
+    'ats:jobs:read',
+  )
   async getPipeline(
     @Param('jobPostId', ParseUUIDPipe) jobPostId: string,
     @Query() query: QueryJobApplicationsDto,
@@ -48,7 +57,11 @@ export class JobApplicationsController {
   }
 
   @Patch('applications/:id/phase')
-  @RequireAnyPermissions('ats:candidates:manage')
+  @RequireAnyPermissions(
+    'ats_candidate:manage:any',
+    'ats_candidate:update:any',
+    'ats:candidates:manage',
+  )
   @AuditAction({
     actionType: AuditActionType.UPDATE,
     actionLabel: 'Chuyển đổi giai đoạn tuyển dụng ứng viên',
@@ -70,7 +83,13 @@ export class JobApplicationsController {
   }
 
   @Get('applications/:id/submissions')
-  @RequireAnyPermissions('ats:candidates:read', 'ats:candidates:manage')
+  @RequireAnyPermissions(
+    'ats_candidate:read:any',
+    'ats_candidate:read:dept',
+    'ats_candidate:manage:any',
+    'ats:candidates:read',
+    'ats:candidates:manage',
+  )
   async getSubmissions(@Param('id', ParseUUIDPipe) id: string) {
     const submissions =
       await this.applicationsService.findSubmissionsByApplicationId(id);
@@ -78,6 +97,61 @@ export class JobApplicationsController {
       success: true,
       data: submissions,
       message: 'Lấy lịch sử các đợt nộp CV thành công',
+    };
+  }
+
+  @Post('applications/:id/rescreen')
+  @RequireAnyPermissions(
+    'ats_candidate:manage:any',
+    'ats_candidate:process:any',
+    'ats:candidates:manage',
+  )
+  @AuditAction({
+    actionType: AuditActionType.UPDATE,
+    actionLabel: 'HR chấm điểm lại thủ công sau lỗi sàng lọc AI',
+    resourceSlug: 'ats_application',
+    resourceLabel: 'Hồ sơ ứng tuyển',
+    targetEntityIdParam: 'id',
+  })
+  async retryScreening(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: ActiveUserData,
+  ) {
+    const data = await this.applicationsService.retryScreening(id, user);
+    return {
+      success: true,
+      data,
+      message: 'Đã đưa hồ sơ vào hàng đợi chấm điểm AI lại.',
+    };
+  }
+
+  @Delete('applications/:id/submissions/:submissionId/cv')
+  @RequireAnyPermissions(
+    'ats_candidate:manage:any',
+    'ats_candidate:delete:any',
+    'ats:candidates:manage',
+  )
+  @AuditAction({
+    actionType: AuditActionType.DELETE,
+    actionLabel: 'Xóa thủ công CV ứng viên khỏi S3',
+    resourceSlug: 'ats_application_submission',
+    resourceLabel: 'Lượt nộp CV',
+    targetEntityIdParam: 'submissionId',
+  })
+  async purgeCvNow(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('submissionId', ParseUUIDPipe) submissionId: string,
+    @CurrentUser() user: ActiveUserData,
+  ) {
+    const data = await this.applicationsService.purgeCvNow(
+      id,
+      submissionId,
+      user,
+    );
+    return {
+      success: true,
+      data,
+      message: 'Đã xóa CV khỏi hệ thống lưu trữ S3.',
     };
   }
 }

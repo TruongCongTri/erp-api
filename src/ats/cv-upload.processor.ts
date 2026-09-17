@@ -61,6 +61,7 @@ export class CvUploadProcessor extends WorkerHost {
       ...dto,
       cvUrl: s3Result.fileUrl,
       cvFileKey: s3Result.fileKey,
+      cvStorageLocation: s3Result.storageLocation,
     });
 
     // 3. Thông báo hoàn tất quá trình
