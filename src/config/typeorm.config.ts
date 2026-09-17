@@ -145,11 +145,16 @@ export const typeOrmConfigFactory = (
   const sslEnabled =
     configService.get<string>('DATABASE_SSL', 'true') === 'true';
 
+  // Support both DATABASE_USERNAME and DATABASE_USER to avoid schema mismatch
+  const username =
+    configService.get<string>('DATABASE_USERNAME') ||
+    configService.get<string>('DATABASE_USER');
+
   const connectionProps = buildConnectionOptions(
     databaseUrl,
     configService.get<string>('DATABASE_HOST'),
     configService.get<number>('DATABASE_PORT', 5432),
-    configService.get<string>('DATABASE_USER'),
+    username,
     configService.get<string>('DATABASE_PASSWORD'),
     configService.get<string>('DATABASE_NAME', 'postgres'),
     sslEnabled,
@@ -171,11 +176,14 @@ export const typeOrmConfigFactory = (
 
 // 3. CLI DataSource configuration for running migrations
 const cliSslEnabled = process.env.DATABASE_SSL !== 'false';
+
+const cliUsername = process.env.DATABASE_USERNAME || process.env.DATABASE_USER;
+
 const cliConnectionProps = buildConnectionOptions(
   process.env.DATABASE_URL,
   process.env.DATABASE_HOST,
   parseInt(process.env.DATABASE_PORT || '5432', 10),
-  process.env.DATABASE_USER,
+  cliUsername,
   process.env.DATABASE_PASSWORD,
   process.env.DATABASE_NAME || 'postgres',
   cliSslEnabled,
