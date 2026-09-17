@@ -66,7 +66,7 @@
 
 // online - Supabase
 // import 'tsconfig-paths/register';
-import 'tsconfig-paths/register';
+// import 'tsconfig-paths/register';
 import { DataSource, DataSourceOptions } from 'typeorm';
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
