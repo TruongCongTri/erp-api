@@ -8,10 +8,19 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   // Enable CORS
+  // app.enableCors({
+  //   origin: ['http://localhost:3000'], // The exact URL of your Next.js app
+  //   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+  //   credentials: true, // Crucial if you are passing cookies or Authorization headers
+  // });
+  const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',')
+    : ['http://localhost:3000'];
+
   app.enableCors({
-    origin: ['http://localhost:3000'], // The exact URL of your Next.js app
+    origin: allowedOrigins,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    credentials: true, // Crucial if you are passing cookies or Authorization headers
+    credentials: true,
   });
 
   // 1. Set Global API Prefix (e.g., domain.com/api/...)
