@@ -1,8 +1,10 @@
 import { NestFactory } from '@nestjs/core';
+import * as dns from 'node:dns';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { TransformInterceptor } from './interceptors/transform.interceptor';
+dns.setDefaultResultOrder('ipv4first');
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
