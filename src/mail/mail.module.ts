@@ -38,6 +38,7 @@ import { MailService } from './mail.service';
             tls: {
               rejectUnauthorized: false, // Bỏ qua lỗi chứng chỉ trên môi trường Cloud Container
             },
+            family: 4, // 👈 BẮT BUỘC: Ép socket chỉ dùng IPv4, bỏ qua IPv6
             connectionTimeout: 15000, // Thiết lập timeout 15 giây tránh bị treo kết nối
             greetingTimeout: 15000,
             socketTimeout: 15000,
