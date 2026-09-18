@@ -3,6 +3,7 @@ import {
   Logger,
   InternalServerErrorException,
   BadRequestException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenAI } from '@google/genai';
@@ -26,6 +27,12 @@ import {
   safeJsonParse,
   validateDtoPayload,
 } from 'src/common/utils/dto-validator.util';
+import {
+  GeminiKeyPool,
+  KeyLease,
+  KeyPoolStatus,
+  collectGeminiApiKeys,
+} from './gemini-key-pool';
 
 // ============================================================================
 // 1. DATA CONTRACTS & INTERFACES
@@ -100,6 +107,28 @@ interface GoogleGenAIConstructor {
 }
 
 export type AiProvider = 'gemini' | 'claude';
+
+/**
+ * AtsAiService được provide ở nhiều module (nhiều instance) → dùng chung một pool
+ * để trạng thái cooldown/quota của mỗi key nhất quán trong toàn process.
+ */
+let sharedGeminiKeyPool: GeminiKeyPool<IGoogleGenAIClient> | undefined;
+
+function getSharedGeminiKeyPool(
+  apiKeys: string[],
+): GeminiKeyPool<IGoogleGenAIClient> {
+  if (!sharedGeminiKeyPool) {
+    const GenAIClientClass = GoogleGenAI as unknown as GoogleGenAIConstructor;
+    sharedGeminiKeyPool = new GeminiKeyPool(
+      apiKeys,
+      (apiKey) => new GenAIClientClass({ apiKey }),
+    );
+  }
+  return sharedGeminiKeyPool;
+}
+
+/** Thời gian tối đa chờ một key hết cooldown khi toàn bộ key đều đang bị giới hạn. */
+const MAX_WAIT_FOR_KEY_MS = 20_000;
 
 /**
  * Trần điểm khi ứng viên KHÔNG đạt bất kỳ kỹ năng bắt buộc nào của JD.
@@ -387,7 +416,7 @@ const semanticMatchingClaudeSchema = {
 export class AtsAiService {
   private readonly logger = new Logger(AtsAiService.name);
   private readonly provider: AiProvider;
-  private geminiClient?: IGoogleGenAIClient;
+  private geminiKeyPool?: GeminiKeyPool<IGoogleGenAIClient>;
   private anthropicClient?: Anthropic;
   private readonly primaryModel: string;
   private readonly fallbackModel: string;
@@ -416,24 +445,27 @@ export class AtsAiService {
       this.primaryModel = 'claude-opus-5';
       this.fallbackModel = 'claude-sonnet-5';
     } else {
-      const apiKey =
-        this.configService.get<string>('GEMINI_API_KEY') ||
-        process.env.GEMINI_API_KEY ||
-        '';
-      if (!apiKey) {
+      const apiKeys = collectGeminiApiKeys(
+        (name) => this.configService.get<string>(name) || process.env[name],
+      );
+      if (apiKeys.length === 0) {
         this.logger.warn(
-          'GEMINI_API_KEY chưa được cấu hình trong Environment.',
+          'Chưa cấu hình GEMINI_API_KEYS / GEMINI_API_KEY_n / GEMINI_API_KEY trong Environment.',
         );
       }
-      const GenAIClientClass = GoogleGenAI as unknown as GoogleGenAIConstructor;
-      this.geminiClient = new GenAIClientClass({ apiKey });
+      this.geminiKeyPool = getSharedGeminiKeyPool(apiKeys);
       this.primaryModel = 'gemini-3.6-flash';
       this.fallbackModel = 'gemini-3.8-flash';
     }
 
     this.logger.log(
-      `AtsAiService khởi tạo với AI provider: ${this.provider.toUpperCase()} (model chính: ${this.primaryModel})`,
+      `AtsAiService khởi tạo với AI provider: ${this.provider.toUpperCase()} (model chính: ${this.primaryModel}${this.geminiKeyPool ? `, ${this.geminiKeyPool.size} API key xoay vòng` : ''})`,
     );
+  }
+
+  /** Trạng thái pool key Gemini (cooldown, số lần 429...) — phục vụ giám sát. */
+  getGeminiKeyPoolStatus(): KeyPoolStatus[] {
+    return this.geminiKeyPool?.getStatus() ?? [];
   }
 
   /**
@@ -451,17 +483,73 @@ export class AtsAiService {
   }
 
   /**
-   * Resilient caller with Exponential Backoff & Automatic Model Fallback
+   * Resilient caller with Gemini API Key Rotation, Exponential Backoff & Automatic Model Fallback.
+   *
+   * - Lỗi gắn với key (429 quota, 401/403 key bị khóa) → cách ly key đó và thử NGAY key khác
+   *   (không tính vào số lần retry, không chờ).
+   * - Toàn bộ key hết quota trên model chính → chuyển sang model dự phòng (quota riêng).
+   * - Toàn bộ key hết quota trên cả hai model → chờ key sớm nhất hồi phục (tối đa MAX_WAIT_FOR_KEY_MS).
+   * - Lỗi 500/503 (model quá tải) → backoff lũy thừa như cũ.
    */
   private async executeWithRetry<T>(
-    operation: (model: string) => Promise<T>,
+    operation: (model: string, geminiClient?: IGoogleGenAIClient) => Promise<T>,
     maxRetries = 3,
   ): Promise<T> {
     let currentModel = this.primaryModel;
+    const pool = this.geminiKeyPool;
+    // Giới hạn số lần đổi key để không lặp vô hạn (mỗi key được thử tối đa 1 lần / model)
+    const maxKeyRotations = pool ? pool.size * 2 : 0;
+    let keyRotations = 0;
+    let attempt = 1;
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    while (attempt <= maxRetries) {
+      let lease: KeyLease<IGoogleGenAIClient> | undefined;
+
+      if (pool) {
+        lease = pool.acquire(currentModel);
+        if (!lease) {
+          if (currentModel !== this.fallbackModel) {
+            this.logger.warn(
+              `[GEMINI KeyPool] Mọi key đều hết quota trên ${currentModel} — chuyển sang model dự phòng ${this.fallbackModel}`,
+            );
+            currentModel = this.fallbackModel;
+            continue;
+          }
+
+          const primaryWait = pool.msUntilNextAvailable(this.primaryModel);
+          const fallbackWait = pool.msUntilNextAvailable(this.fallbackModel);
+          const waitMs = Math.min(primaryWait, fallbackWait);
+          if (waitMs > MAX_WAIT_FOR_KEY_MS || attempt >= maxRetries) {
+            throw new ServiceUnavailableException(
+              `Toàn bộ ${pool.size} API key Gemini đang bị giới hạn quota. Vui lòng thử lại sau ~${Math.ceil(waitMs / 1000)}s.`,
+            );
+          }
+          if (primaryWait <= fallbackWait) currentModel = this.primaryModel;
+          this.logger.warn(
+            `[GEMINI KeyPool] Mọi key đang cooldown — chờ ${Math.round(waitMs / 1000)}s để key sớm nhất hồi phục...`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          attempt++;
+          continue;
+        }
+      }
+
+      if (pool && lease) {
+        this.logger.log(
+          `[GEMINI KeyPool] → ${lease.keyId} | model ${currentModel} | lần thử ${attempt}/${maxRetries}, xoay key ${keyRotations}/${maxKeyRotations} | khả dụng ${pool.availableCount(currentModel)}/${pool.size}`,
+        );
+      }
+
+      const startedAt = Date.now();
       try {
-        return await operation(currentModel);
+        const result = await operation(currentModel, lease?.client);
+        if (pool && lease) {
+          pool.reportSuccess(lease, currentModel);
+          this.logger.log(
+            `[GEMINI KeyPool] ✓ ${lease.keyId} | model ${currentModel} | ${Date.now() - startedAt}ms`,
+          );
+        }
+        return result;
       } catch (error: unknown) {
         const errorRecord = error as Record<string, unknown> | null;
         const metadata = errorRecord?.$metadata as
@@ -476,6 +564,27 @@ export class AtsAiService {
           (typeof metadata?.httpStatusCode === 'number'
             ? metadata.httpStatusCode
             : undefined);
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+
+        if (pool && lease) {
+          this.logger.warn(
+            `[GEMINI KeyPool] ✗ ${lease.keyId} | model ${currentModel} | HTTP ${statusCode ?? '?'} | ${Date.now() - startedAt}ms | ${errorMessage.slice(0, 200)}`,
+          );
+          const outcome = pool.reportFailure(
+            lease,
+            currentModel,
+            statusCode,
+            errorMessage,
+          );
+          if (outcome === 'rotate' && keyRotations < maxKeyRotations) {
+            keyRotations++;
+            this.logger.warn(
+              `[GEMINI KeyPool] ${lease.keyId} lỗi ${statusCode ?? '?'} trên ${currentModel} — xoay sang key khác (${keyRotations}/${maxKeyRotations}).`,
+            );
+            continue;
+          }
+        }
 
         const isTransient =
           statusCode === 503 || statusCode === 429 || statusCode === 500;
@@ -494,12 +603,12 @@ export class AtsAiService {
           }
 
           await new Promise((resolve) => setTimeout(resolve, delayMs));
+          attempt++;
           continue;
         }
 
-        const msg = error instanceof Error ? error.message : String(error);
         this.logger.error(
-          `[${this.provider.toUpperCase()} Error] Thất bại sau ${attempt} lần thử trên model ${currentModel}: ${msg}`,
+          `[${this.provider.toUpperCase()} Error] Thất bại sau ${attempt} lần thử trên model ${currentModel}${lease ? ` (${lease.keyId})` : ''}: ${errorMessage}`,
         );
         throw error;
       }
@@ -521,7 +630,7 @@ export class AtsAiService {
     claudeSchema: Record<string, unknown>;
     temperature: number;
   }): Promise<string> {
-    return this.executeWithRetry(async (model) => {
+    return this.executeWithRetry(async (model, geminiClient) => {
       if (this.provider === 'claude') {
         const response = await this.anthropicClient!.messages.create({
           model,
@@ -543,7 +652,7 @@ export class AtsAiService {
         return textBlock?.text ?? '';
       }
 
-      const response = await this.geminiClient!.models.generateContent({
+      const response = await geminiClient!.models.generateContent({
         model,
         contents: params.userContent,
         config: {

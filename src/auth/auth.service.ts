@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
   RegisterDto,
   LoginDto,
@@ -63,15 +63,61 @@ export class AuthService {
   // CORE AUTHENTICATION
   // =====================================
 
+  // @CacheClear({
+  //   key: ['users:available', 'users:list:*'],
+  //   isPattern: true, // Wipe lists since a new user was added to the system
+  // })
+  // async register(dto: RegisterDto): Promise<User> {
+  //   const existing = await this.userRepository.findOneBy({ email: dto.email });
+  //   if (existing) throw new ConflictException(MESSAGES.ERROR.AUTH.REGISTERED);
+
+  //   // 1. Fetch the default GUEST role from the database
+  //   const guestRole = await this.roleRepository.findOneBy({ slug: 'GUEST' });
+  //   if (!guestRole) {
+  //     throw new InternalServerErrorException(
+  //       'System GUEST role is missing. Please run database seeds.',
+  //     );
+  //   }
+
+  //   const user = this.userRepository.create({
+  //     ...dto,
+  //     passwordHash: await bcrypt.hash(dto.password, 10),
+  //     status: UserStatus.PENDING_VERIFICATION,
+  //   });
+
+  //   const savedUser = await this.userRepository.save(user);
+
+  //   // Fire and forget! The NotificationsService will hear this and handle the rest.
+  //   // Tell ESLint to ignore the underlying 'any' signature of the emit method
+  //   // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+  //   this.eventEmitter.emit('user.registered', {
+  //     userId: savedUser.id,
+  //     email: savedUser.email,
+  //     fullName: savedUser.fullName,
+  //   });
+
+  //   try {
+  //     // Await the OTP sending
+  //     await this.sendVerificationEmail(savedUser.id);
+  //   } catch (_error) {
+  //     // The OTP failed, but the user IS registered.
+  //     // We don't want to throw a 500 here. Just log it, and the frontend
+  //     // will redirect them to the "Enter OTP" screen where they can click "Resend".
+  //     this.logger.warn(
+  //       `User ${savedUser.id} registered, but initial OTP failed to send.`,
+  //     );
+  //   }
+  //   return savedUser;
+  // }
   @CacheClear({
     key: ['users:available', 'users:list:*'],
-    isPattern: true, // Wipe lists since a new user was added to the system
+    isPattern: true,
   })
-  async register(dto: RegisterDto): Promise<User> {
+  async register(dto: RegisterDto): Promise<Omit<User, 'passwordHash'>> {
     const existing = await this.userRepository.findOneBy({ email: dto.email });
     if (existing) throw new ConflictException(MESSAGES.ERROR.AUTH.REGISTERED);
 
-    // 1. Fetch the default GUEST role from the database
+    // 1. Fetch default GUEST role
     const guestRole = await this.roleRepository.findOneBy({ slug: 'GUEST' });
     if (!guestRole) {
       throw new InternalServerErrorException(
@@ -79,35 +125,62 @@ export class AuthService {
       );
     }
 
+    // 2. Hash password & khởi tạo user (đã gán role chính xác)
+    const hashedPassword = await bcrypt.hash(dto.password, 10);
+
+    // 3. Khởi tạo user với đúng tên thuộc tính trong User Entity:
+    // - Dùng `role: guestRole` thay vì `roles: [guestRole]`
+    // - Dùng tên cột password đúng trong entity (ví dụ `password: hashedPassword`)
     const user = this.userRepository.create({
       ...dto,
-      passwordHash: await bcrypt.hash(dto.password, 10),
+      passwordHash: hashedPassword, // 👈 Đổi 'passwordHash' thành 'password' (hoặc đúng tên cột trong User entity của bạn)
+      role: guestRole, // 👈 Đổi 'roles: [guestRole]' thành 'role: guestRole'
       status: UserStatus.PENDING_VERIFICATION,
     });
 
     const savedUser = await this.userRepository.save(user);
 
-    // Fire and forget! The NotificationsService will hear this and handle the rest.
-    // Tell ESLint to ignore the underlying 'any' signature of the emit method
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+    // 3. Fire-and-forget: Bắn event để listener ngầm tự xử lý gửi email ở background
     this.eventEmitter.emit('user.registered', {
       userId: savedUser.id,
       email: savedUser.email,
       fullName: savedUser.fullName,
     });
 
+    // 4. Loại bỏ passwordHash trước khi trả về client
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { passwordHash: _, ...sanitizedUser } = savedUser;
+    return sanitizedUser;
+  }
+
+  /**
+   * Listener xử lý tạo token và gửi email kích hoạt ở background
+   */
+  @OnEvent('user.registered', { async: true })
+  async handleUserRegisteredEvent(payload: { userId: string }): Promise<void> {
     try {
-      // Await the OTP sending
-      await this.sendVerificationEmail(savedUser.id);
-    } catch (_error) {
-      // The OTP failed, but the user IS registered.
-      // We don't want to throw a 500 here. Just log it, and the frontend
-      // will redirect them to the "Enter OTP" screen where they can click "Resend".
-      this.logger.warn(
-        `User ${savedUser.id} registered, but initial OTP failed to send.`,
+      await this.sendVerificationEmail(payload.userId);
+    } catch (error: any) {
+      this.logger.error(
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        `Background verification email failed for user ${payload.userId}: ${error.message}`,
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+        error.stack,
       );
     }
-    return savedUser;
+  }
+
+  async sendVerificationEmail(userId: string): Promise<void> {
+    const user = await this.userRepository.findOneBy({ id: userId });
+    if (!user) throw new NotFoundException('User not found');
+
+    const token = crypto.randomBytes(32).toString('hex');
+
+    // Lưu token kích hoạt vào Redis cache (TTL 300s = 5 phút, TTL 900s = 15 phút)
+    await this.cacheService.set(`verify_token:${userId}`, token, 900);
+
+    // Gửi email qua SMTP
+    await this.mailService.sendVerificationLink(user.email, user.id, token);
   }
 
   // (Login methods bypass standard caching because they require strictly hitting the
@@ -451,26 +524,26 @@ export class AuthService {
       );
     }
   }
-  async sendVerificationEmail(userId: string): Promise<void> {
-    const user = await this.userRepository.findOneBy({ id: userId });
-    if (!user) throw new NotFoundException('User not found');
+  // async sendVerificationEmail(userId: string): Promise<void> {
+  //   const user = await this.userRepository.findOneBy({ id: userId });
+  //   if (!user) throw new NotFoundException('User not found');
 
-    // Generate a long, secure token instead of a 6-digit number
-    const token = crypto.randomBytes(32).toString('hex');
+  //   // Generate a long, secure token instead of a 6-digit number
+  //   const token = crypto.randomBytes(32).toString('hex');
 
-    try {
-      // Save to cache for 5 minutes (300 seconds)
-      await this.cacheService.set(`verify_token:${userId}`, token, 300);
+  //   try {
+  //     // Save to cache for 5 minutes (300 seconds)
+  //     await this.cacheService.set(`verify_token:${userId}`, token, 300);
 
-      // Call the MailService
-      await this.mailService.sendVerificationLink(user.email, user.id, token);
-    } catch (error) {
-      this.logger.error(`Failed to send verification link to ${userId}`, error);
-      throw new InternalServerErrorException(
-        'Hệ thống không thể gửi email kích hoạt lúc này. Vui lòng thử lại sau.',
-      );
-    }
-  }
+  //     // Call the MailService
+  //     await this.mailService.sendVerificationLink(user.email, user.id, token);
+  //   } catch (error) {
+  //     this.logger.error(`Failed to send verification link to ${userId}`, error);
+  //     throw new InternalServerErrorException(
+  //       'Hệ thống không thể gửi email kích hoạt lúc này. Vui lòng thử lại sau.',
+  //     );
+  //   }
+  // }
 
   @CacheClear({
     key: (userId: unknown) => [

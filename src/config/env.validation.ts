@@ -73,6 +73,11 @@ export class EnvironmentVariables {
   @IsOptional()
   GEMINI_API_KEY?: string;
 
+  // Comma-separated Gemini keys for rotation (also reads GEMINI_API_KEY_1..20).
+  @IsString()
+  @IsOptional()
+  GEMINI_API_KEYS?: string;
+
   @IsString()
   @IsOptional()
   ANTHROPIC_API_KEY?: string;
