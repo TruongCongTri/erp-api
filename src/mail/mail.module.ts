@@ -11,6 +11,11 @@ import { MailService } from './mail.service';
       useFactory: (configService: ConfigService) => {
         const mailUser = configService.get<string>('MAIL_USER');
         const mailPass = configService.get<string>('MAIL_PASS');
+        const mailHost = configService.get<string>(
+          'MAIL_HOST',
+          'smtp.gmail.com',
+        );
+        const mailPort = Number(configService.get<string>('MAIL_PORT', '587'));
 
         // DEBUGGING: This will print to your terminal when the server starts.
         // If these say "undefined", we know 100% the .env file is not loading!
@@ -19,14 +24,23 @@ import { MailService } from './mail.service';
           `Loaded MAIL_PASS: ${mailPass ? '********' : 'MISSING!'}`,
           'MailModule',
         );
+        Logger.debug(`Using SMTP Host: ${mailHost}:${mailPort}`, 'MailModule');
 
         return {
           transport: {
-            service: 'gmail', // 👈 Use this instead of host/port/secure
+            host: mailHost,
+            port: mailPort,
+            secure: false, // Bắt buộc là false đối với cổng 587 (Sử dụng STARTTLS)
             auth: {
               user: mailUser,
               pass: mailPass,
             },
+            tls: {
+              rejectUnauthorized: false, // Bỏ qua lỗi chứng chỉ trên môi trường Cloud Container
+            },
+            connectionTimeout: 15000, // Thiết lập timeout 15 giây tránh bị treo kết nối
+            greetingTimeout: 15000,
+            socketTimeout: 15000,
           },
           defaults: {
             from: `"Hệ thống quản lý" <${mailUser}>`,

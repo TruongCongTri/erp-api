@@ -73,12 +73,13 @@
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "reflect-metadata": "^0.2.2",
+    "resend": "^6.28.1",
     "rxjs": "^7.8.1",
     "slugify": "^1.6.9",
     "socket.io": "^4.8.3",
+    "tsconfig-paths": "^4.2.0",
     "typeorm": "^1.1.0",
-    "vietnam-administrative-address": "^0.4.1",
-    "tsconfig-paths": "^4.2.0"
+    "vietnam-administrative-address": "^0.4.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
