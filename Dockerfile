@@ -6,7 +6,8 @@ FROM node:22-alpine AS builder
 WORKDIR /usr/src/app
 
 COPY package*.json ./
-RUN npm ci
+# Use npm install instead of npm ci to resolve tree mismatches dynamically
+RUN npm install
 
 COPY . .
 RUN npm run build
@@ -19,7 +20,7 @@ FROM node:22-alpine AS deps
 WORKDIR /usr/src/app
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
 # ==========================================
 # STAGE 3: PRODUCTION RUNTIME
