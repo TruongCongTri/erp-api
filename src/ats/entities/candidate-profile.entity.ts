@@ -9,8 +9,11 @@ import { AuditableEntity } from 'src/common/entities/auditable.entity';
 import { JobApplication } from './job-application.entity';
 
 @Entity('candidate_profiles')
-@Index('idx_candidates_email', ['email'], { unique: true })
+//
+@Index('idx_candidates_email_unique', ['email'], { unique: true })
 @Index('idx_candidates_phone', ['phoneNumber'])
+@Index('idx_candidates_created_at', ['createdAt'])
+@Index('idx_candidates_name_created', ['fullName', 'createdAt'])
 export class CandidateProfile extends AuditableEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;

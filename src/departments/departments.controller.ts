@@ -37,19 +37,33 @@ export class DepartmentsController {
     return this.departmentsService.create(dto, req.user);
   }
 
-  @Get()
-  findAll(@Query() query: QueryDepartmentDto) {
-    return this.departmentsService.findAll(query);
+  // 1. Đặt các Static Routes trước Dynamic Parameterized Routes (:idOrSlug)
+  @Get('tree')
+  getTree(
+    @Query('organizationId') organizationId?: string,
+    @Query('refresh') refresh?: string,
+  ) {
+    const forceRefresh = refresh === 'true';
+    return this.departmentsService.getTree(organizationId, forceRefresh);
   }
 
-  @Get('tree')
-  getTree(@Query('organizationId') organizationId?: string) {
-    return this.departmentsService.getTree(organizationId);
+  @Get()
+  findAll(@Query() query: QueryDepartmentDto) {
+    // 2. Immutable Destructuring: Bóc tách param refresh an toàn
+    const { refresh, ...cleanQuery } = query as QueryDepartmentDto & {
+      refresh?: string;
+    };
+    const forceRefresh = refresh === 'true';
+    return this.departmentsService.findAll(cleanQuery, forceRefresh);
   }
 
   @Get(':idOrSlug')
-  findOne(@Param('idOrSlug') idOrSlug: string) {
-    return this.departmentsService.findOne(idOrSlug);
+  findOne(
+    @Param('idOrSlug') idOrSlug: string,
+    @Query('refresh') refresh?: string,
+  ) {
+    const forceRefresh = refresh === 'true';
+    return this.departmentsService.findOne(idOrSlug, forceRefresh);
   }
 
   @Patch(':id')

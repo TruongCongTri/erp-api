@@ -1,5 +1,4 @@
 // src/roles/roles.controller.ts
-import { Request } from 'express';
 import {
   Controller,
   Get,
@@ -50,8 +49,9 @@ export class RolesController {
   // =====================================
   @Get(ROUTES.GENERAL.RECYCLE_BIN) // /roles/recycle-bin
   @RequirePermissions('it_system:read:any')
-  async findRecycleBin() {
-    const data = await this.rolesService.findRecycleBin();
+  async findRecycleBin(@Query('refresh') refresh?: string) {
+    const forceRefresh = refresh === 'true';
+    const data = await this.rolesService.findRecycleBin(forceRefresh);
     return {
       data,
       message: 'Recycle bin retrieved successfully',
@@ -83,15 +83,14 @@ export class RolesController {
 
   @Get()
   @RequirePermissions('it_system:read:any')
-  async findAll(
-    @Query() query: RoleQueryDto,
-    @Query('refresh') refresh?: string,
-  ) {
-    if (query['refresh']) delete query['refresh'];
-
+  async findAll(@Query() query: RoleQueryDto) {
+    // 1. Immutable Destructuring: Loại bỏ hoàn toàn toán tử delete, giữ vững V8 optimization
+    const { refresh, ...cleanQuery } = query as RoleQueryDto & {
+      refresh?: string;
+    };
     const forceRefresh = refresh === 'true';
 
-    const result = await this.rolesService.findAll(query, forceRefresh);
+    const result = await this.rolesService.findAll(cleanQuery, forceRefresh);
     return {
       data: result.data,
       meta: result.meta,
@@ -112,7 +111,7 @@ export class RolesController {
   ) {
     const data = await this.rolesService.updateRolePermissions(
       roleId,
-      permissionIds,
+      permissionIds || [],
       user,
     );
     return {
@@ -130,7 +129,10 @@ export class RolesController {
     @Param('id') roleId: string,
     @Body('userIds') userIds: string[],
   ) {
-    const data = await this.rolesService.assignUsersToRole(roleId, userIds);
+    const data = await this.rolesService.assignUsersToRole(
+      roleId,
+      userIds || [],
+    );
     return {
       data,
       message: MESSAGES.SUCCESS.ASSIGN(
@@ -176,7 +178,7 @@ export class RolesController {
     };
   }
 
-  @Patch(':id/toggle-status') // /roles/:id/toggle-status
+  @Patch(ROUTES.GENERAL.TOGGLE_STATUS) // /roles/:id/status
   @RequirePermissions('it_system:update:any')
   async toggleStatus(
     @Param('id') id: string,

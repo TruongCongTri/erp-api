@@ -49,10 +49,71 @@ export class UsersController {
   // =====================================
   // STATIC ROUTES (Must come before :id)
   // =====================================
+  // --- Profile Claim Workflow ---
+  @Post('claim-profile')
+  async submitProfileClaim(
+    @Body() dto: ClaimProfileDto,
+    @CurrentUser() user: ActiveUserData,
+  ) {
+    const data = await this.usersService.submitProfileClaim(user.id, dto);
+    return { success: true, data, message: data.message };
+  }
+
+  @Get('claims/pending')
+  @RequirePermissions('hr:read:any', 'hr:read:dept')
+  async getPendingClaims(@Query() query: UserQueryDto) {
+    // Tối ưu V8: Tách param bất biến, không xóa key trên query object
+    const { refresh, ...cleanQuery } = query as UserQueryDto & {
+      refresh?: string;
+    };
+    const forceRefresh = refresh === 'true';
+
+    const { data, meta } = await this.usersService.getPendingClaims(
+      cleanQuery,
+      forceRefresh,
+    );
+    return { success: true, data, meta, message: 'Danh sách chờ phê duyệt.' };
+  }
+
+  @Post('claims/:id/approve')
+  @RequirePermissions(
+    'hr:update:any',
+    'role:update:any',
+    'it_system:update:any',
+  )
+  async approveProfileClaim(
+    @Param('id') id: string,
+    @Body() dto: ApproveClaimDto,
+    @CurrentUser() adminUser: ActiveUserData,
+  ) {
+    await this.usersService.approveProfileClaim(
+      id,
+      dto.roleId,
+      dto.bonusPermissionIds,
+      adminUser,
+    );
+    return {
+      success: true,
+      message: 'Đã phê duyệt liên kết hồ sơ và phân quyền thành công.',
+    };
+  }
+
+  @Post('claims/:id/reject')
+  @RequirePermissions('hr:update:any')
+  async rejectProfileClaim(
+    @Param('id') id: string,
+    @CurrentUser() adminUser: ActiveUserData,
+  ) {
+    await this.usersService.rejectProfileClaim(id, adminUser);
+    return { success: true, message: 'Đã từ chối yêu cầu liên kết hồ sơ.' };
+  }
+
+  // --- Static Lookups & Lists ---
   @Get(ROUTES.GENERAL.RECYCLE_BIN) // /api/v1/users/recycle-bin
   @RequirePermissions('hr:read:any')
-  async findRecycleBin() {
-    const data = await this.usersService.findRecycleBin();
+  async findRecycleBin(@Query('refresh') refresh?: string) {
+    const forceRefresh = refresh === 'true';
+    const data = await this.usersService.findRecycleBin(forceRefresh);
     return { data, message: 'User recycle bin retrieved' };
   }
 
@@ -70,7 +131,15 @@ export class UsersController {
   @Get('access') // /api/v1/users/access
   @RequirePermissions('hr:read:any', 'hr:read:dept', 'it_system:read:any')
   async getAllUsersAccess(@Query() query: UserQueryDto) {
-    const { data, meta } = await this.usersService.findAll(query);
+    const { refresh, ...cleanQuery } = query as UserQueryDto & {
+      refresh?: string;
+    };
+    const forceRefresh = refresh === 'true';
+
+    const { data, meta } = await this.usersService.findAll(
+      cleanQuery,
+      forceRefresh,
+    );
     return {
       success: true,
       data,
@@ -81,15 +150,13 @@ export class UsersController {
 
   @Get() // /api/v1/users
   @RequirePermissions('hr:read:any', 'hr:read:dept')
-  async findAll(
-    @Query() query: UserQueryDto,
-    @Query('refresh') refresh?: string,
-  ) {
-    if (query['refresh']) delete query['refresh'];
-
+  async findAll(@Query() query: UserQueryDto) {
+    const { refresh, ...cleanQuery } = query as UserQueryDto & {
+      refresh?: string;
+    };
     const forceRefresh = refresh === 'true';
 
-    const result = await this.usersService.findAll(query, forceRefresh);
+    const result = await this.usersService.findAll(cleanQuery, forceRefresh);
     return {
       data: result.data,
       meta: result.meta,
@@ -98,14 +165,18 @@ export class UsersController {
   }
 
   // =====================================
-  // DYNAMIC ID ROUTES
+  // 2. PARAMETERIZED ROUTES (:id)
   // =====================================
 
   // Specialized Route for IT/Admin to update system access
   @Get(':id/access') // /api/v1/users/:id/access
   @RequirePermissions('hr:read:any', 'hr:read:dept', 'it_system:read:any')
-  async getUserAccessDetails(@Param('id') id: string) {
-    const data = await this.usersService.getUserAccessDetails(id);
+  async getUserAccessDetails(
+    @Param('id') id: string,
+    @Query('refresh') refresh?: string,
+  ) {
+    const forceRefresh = refresh === 'true';
+    const data = await this.usersService.getUserAccessDetails(id, forceRefresh);
     return {
       success: true,
       data,
@@ -123,7 +194,7 @@ export class UsersController {
     await this.usersService.updateUserAccess(
       id,
       accessDto.roleId,
-      accessDto.bonusPermissionIds,
+      accessDto.bonusPermissionIds || [],
       adminUser,
     );
     return {
@@ -241,67 +312,5 @@ export class UsersController {
     return {
       message: MESSAGES.SUCCESS.USER.REVOKE,
     };
-  }
-
-  // =====================================
-  // CLAIM PROFILE WORKFLOW
-  // =====================================
-
-  // 1. Worker initiates claim (Requires basic login, no strict RBAC needed)
-  @Post('claim-profile')
-  async submitProfileClaim(
-    @Body() dto: ClaimProfileDto,
-    @CurrentUser() user: ActiveUserData,
-  ) {
-    const data = await this.usersService.submitProfileClaim(user.id, dto);
-    return { success: true, data, message: data.message };
-  }
-
-  // 2. HR fetches the pending list
-  @Get('claims/pending')
-  @RequirePermissions('hr:read:any', 'hr:read:dept')
-  async getPendingClaims(
-    @Query() query: UserQueryDto,
-    @Query('refresh') refresh?: string,
-  ) {
-    const forceRefresh = refresh === 'true';
-    if (query['refresh']) delete query['refresh'];
-
-    const { data, meta } = await this.usersService.getPendingClaims(
-      query,
-      forceRefresh,
-    );
-    return { success: true, data, meta, message: 'Danh sách chờ phê duyệt.' };
-  }
-
-  // 3. HR Approves the claim and assigns the role
-  @Post('claims/:id/approve')
-  @RequirePermissions('hr:update:any', 'role:update:any')
-  async approveProfileClaim(
-    @Param('id') id: string,
-    @Body() dto: ApproveClaimDto,
-    @CurrentUser() adminUser: ActiveUserData,
-  ) {
-    await this.usersService.approveProfileClaim(
-      id,
-      dto.roleId,
-      dto.bonusPermissionIds,
-      adminUser,
-    );
-    return {
-      success: true,
-      message: 'Đã phê duyệt liên kết hồ sơ và phân quyền thành công.',
-    };
-  }
-
-  // 4. HR Rejects the claim
-  @Post('claims/:id/reject')
-  @RequirePermissions('hr:update:any')
-  async rejectProfileClaim(
-    @Param('id') id: string,
-    @CurrentUser() adminUser: ActiveUserData,
-  ) {
-    await this.usersService.rejectProfileClaim(id, adminUser);
-    return { success: true, message: 'Đã từ chối yêu cầu liên kết hồ sơ.' };
   }
 }

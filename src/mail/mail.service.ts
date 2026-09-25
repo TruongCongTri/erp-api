@@ -1,19 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { MailerService } from '@nestjs-modules/mailer';
 import { ConfigService } from '@nestjs/config';
-import { Resend } from 'resend';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private resend: Resend;
 
   constructor(
     private readonly mailerService: MailerService,
     private readonly configService: ConfigService,
-  ) {
-    this.resend = new Resend(this.configService.get('RESEND_API_KEY'));
-  }
+  ) {}
 
   async sendVerificationLink(
     email: string,
@@ -63,16 +59,6 @@ export class MailService {
       throw error; // Bubble the error up to the caller's try/catch block
     }
   }
-  // async sendVerificationLink(email: string, userId: string, token: string) {
-  //   const url = `${this.configService.get('FRONTEND_URL')}/vi/verify?userId=${userId}&token=${token}`;
-
-  //   await this.resend.emails.send({
-  //     from: 'onboarding@resend.dev', // Hoặc domain doanh nghiệp của bạn
-  //     to: email,
-  //     subject: 'Xác thực tài khoản của bạn',
-  //     html: `<p>Nhấn vào <a href="${url}">đây</a> để kích hoạt tài khoản.</p>`,
-  //   });
-  // }
 
   async sendVerificationOTP(
     email: string,

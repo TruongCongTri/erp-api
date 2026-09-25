@@ -56,6 +56,21 @@ export class JobApplicationsController {
     };
   }
 
+  @Get('jobs/:jobPostId/pipeline-stats')
+  @RequireAnyPermissions(
+    'ats_candidate:read:any',
+    'ats_candidate:read:dept',
+    'ats:candidates:read',
+  )
+  async getPipelineStats(@Param('jobPostId', ParseUUIDPipe) jobPostId: string) {
+    const stats = await this.applicationsService.getPipelineStats(jobPostId);
+    return {
+      success: true,
+      data: stats,
+      message: 'Lấy thống kê pipeline thành công',
+    };
+  }
+
   @Patch('applications/:id/phase')
   @RequireAnyPermissions(
     'ats_candidate:manage:any',

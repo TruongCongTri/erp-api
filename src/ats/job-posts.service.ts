@@ -7,7 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Brackets, SelectQueryBuilder, DeepPartial } from 'typeorm';
+import { Repository, Brackets, DeepPartial } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -39,13 +39,15 @@ import {
   getUserDepartmentId,
   ExtendedUser,
 } from '../common/utils/ats-rbac.util';
+import { Department } from 'src/departments/entities/department.entity';
+import { CacheService } from 'src/common/cache/cache.service';
 
-export interface RoleObject {
-  id?: string;
-  name?: string;
-  code?: string;
-  slug?: string;
-}
+// export interface RoleObject {
+//   id?: string;
+//   name?: string;
+//   code?: string;
+//   slug?: string;
+// }
 
 // interface RawDepartmentQueryResult {
 //   departmentId?: string;
@@ -55,14 +57,21 @@ export interface RoleObject {
 @Injectable()
 export class JobPostsService {
   private readonly logger = new Logger(JobPostsService.name);
+  private readonly CACHE_PREFIX = 'ats:job_posts';
+  private readonly USER_DEPT_CACHE_PREFIX = 'user:department_scope';
 
   constructor(
     @InjectRepository(JobPost)
     private readonly jobPostRepo: Repository<JobPost>,
     @InjectRepository(RecruitmentRequest)
     private readonly reqRepo: Repository<RecruitmentRequest>,
+    @InjectRepository(JobApplication)
+    private readonly jobAppRepo: Repository<JobApplication>,
+    @InjectRepository(Department)
+    private readonly departmentRepo: Repository<Department>,
     private readonly publishingService: JobPublishingService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly cacheService: CacheService,
     @InjectQueue('job-publishing')
     private readonly publishQueue: Queue,
   ) {}
@@ -90,6 +99,11 @@ export class JobPostsService {
 
       const existingJob = await this.jobPostRepo.findOne({
         where: { recruitmentRequestId: dto.recruitmentRequestId },
+        select: {
+          id: true,
+          jobCode: true,
+          status: true,
+        },
       });
 
       if (existingJob) {
@@ -163,7 +177,7 @@ export class JobPostsService {
   }
 
   // ========================================================
-  // 2. QUERYING & SCOPE ENFORCEMENT
+  // 2. QUERYING & SCOPE ENFORCEMENT (OPTIMIZED)
   // ========================================================
   async findAll(query: QueryJobPostDto, user: ExtendedUser) {
     const {
@@ -177,23 +191,60 @@ export class JobPostsService {
       platform,
       isTemplate,
     } = query;
+
     const skip = (page - 1) * limit;
 
-    const qb: SelectQueryBuilder<JobPost> =
-      this.jobPostRepo.createQueryBuilder('job');
-
-    qb.leftJoinAndSelect('job.recruitmentRequest', 'recruitmentRequest');
-    qb.leftJoinAndSelect('recruitmentRequest.department', 'department');
+    // Tiêu chí 2 & 3: Chỉ SELECT các cột cần thiết cho danh sách, bỏ các trường text lớn
+    const qb = this.jobPostRepo
+      .createQueryBuilder('job')
+      .leftJoin('job.recruitmentRequest', 'recruitmentRequest')
+      .leftJoin('recruitmentRequest.department', 'department')
+      .select([
+        'job.id',
+        'job.jobCode',
+        'job.publicTitle',
+        'job.specialization',
+        'job.domainKnowledge',
+        'job.level',
+        'job.jobType',
+        'job.workingModel',
+        'job.salaryMin',
+        'job.salaryMax',
+        'job.isSalaryNegotiable',
+        'job.workLocations',
+        'job.workingHoursStandard',
+        'job.minEducation',
+        'job.experienceYears',
+        'job.gender',
+        'job.applicationDeadline',
+        'job.headcount',
+        'job.campaignName',
+        'job.status',
+        'job.targetPlatforms',
+        'job.isTemplate',
+        'job.publishedAt',
+        'job.scheduledPublishAt',
+        'job.createdAt',
+        'job.updatedAt',
+        // Lean fields quan hệ
+        'recruitmentRequest.id',
+        'recruitmentRequest.requestCode',
+        'recruitmentRequest.departmentId',
+        'department.id',
+        'department.name',
+        'department.code',
+      ]);
 
     // ── RBAC Scope Enforcement cho Job Posts ──
     const canReadAny = hasPermission(user, 'ats_job_post', 'read', 'any');
     const canReadDept = hasPermission(user, 'ats_job_post', 'read', 'dept');
 
     if (!canReadAny) {
-      const userDeptId = await getUserDepartmentId(
-        this.jobPostRepo.manager,
-        user,
-      );
+      // const userDeptId = await getUserDepartmentId(
+      //   this.jobPostRepo.manager,
+      //   user,
+      // );
+      const userDeptId = await this.getCachedUserDepartmentId(user);
 
       if (canReadDept && userDeptId) {
         // Chỉ xem các job posts thuộc phòng ban của mình
@@ -227,19 +278,34 @@ export class JobPostsService {
       }
     }
 
-    // ── Filters ──
+    // ── Filters (Tận dụng B-Tree Index) ──
+    // if (search) {
+    //   qb.andWhere(
+    //     new Brackets((sub) => {
+    //       sub
+    //         .where('LOWER(job.publicTitle) LIKE LOWER(:search)', {
+    //           search: `%${search}%`,
+    //         })
+    //         .orWhere('LOWER(job.jobCode) LIKE LOWER(:search)', {
+    //           search: `%${search}%`,
+    //         })
+    //         .orWhere('LOWER(job.specialization) LIKE LOWER(:search)', {
+    //           search: `%${search}%`,
+    //         });
+    //     }),
+    //   );
+    // }
     if (search) {
+      const cleanSearch = search.trim();
       qb.andWhere(
         new Brackets((sub) => {
           sub
-            .where('LOWER(job.publicTitle) LIKE LOWER(:search)', {
-              search: `%${search}%`,
+            .where('job.jobCode ILIKE :search', { search: `%${cleanSearch}%` })
+            .orWhere('job.publicTitle ILIKE :search', {
+              search: `%${cleanSearch}%`,
             })
-            .orWhere('LOWER(job.jobCode) LIKE LOWER(:search)', {
-              search: `%${search}%`,
-            })
-            .orWhere('LOWER(job.specialization) LIKE LOWER(:search)', {
-              search: `%${search}%`,
+            .orWhere('job.specialization ILIKE :search', {
+              search: `%${cleanSearch}%`,
             });
         }),
       );
@@ -269,17 +335,51 @@ export class JobPostsService {
       }
     }
 
-    qb.orderBy(`job.${sortBy}`, sortOrder);
+    // Tiêu chí 1: Whitelist sắp xếp theo Index để tránh File Sort đĩa
+    const validSortFields = [
+      'createdAt',
+      'publishedAt',
+      'applicationDeadline',
+      'status',
+      'publicTitle',
+    ];
+    const safeSortBy = validSortFields.includes(sortBy) ? sortBy : 'createdAt';
+
+    qb.orderBy(`job.${safeSortBy}`, sortOrder);
     qb.addOrderBy('job.id', sortOrder);
     qb.skip(skip).take(limit);
 
     const [data, total] = await qb.getManyAndCount();
 
+    // if (data.length > 0) {
+    //   const jobIds = data.map((j) => j.id);
+
+    //   const rawCounts = await this.jobPostRepo.manager
+    //     .createQueryBuilder(JobApplication, 'app')
+    //     .select('app.jobPostId', 'jobPostId')
+    //     .addSelect('COUNT(app.id)', 'count')
+    //     .where('app.jobPostId IN (:...jobIds)', { jobIds })
+    //     .groupBy('app.jobPostId')
+    //     .getRawMany<{ jobPostId: string; count: string }>();
+
+    //   const countMap = new Map(
+    //     rawCounts.map((item) => [item.jobPostId, parseInt(item.count, 10)]),
+    //   );
+
+    //   data.forEach((jobItem) => {
+    //     jobItem.applicationsCount = countMap.get(jobItem.id) || 0;
+    //   });
+    // }
+    // const userDeptId = await getUserDepartmentId(
+    //   this.jobPostRepo.manager,
+    //   user,
+    // );
+    // Tiêu chí 2: Batching đếm số lượng hồ sơ ứng tuyển (Triệt tiêu N+1 Query)
     if (data.length > 0) {
       const jobIds = data.map((j) => j.id);
 
-      const rawCounts = await this.jobPostRepo.manager
-        .createQueryBuilder(JobApplication, 'app')
+      const rawCounts = await this.jobAppRepo
+        .createQueryBuilder('app')
         .select('app.jobPostId', 'jobPostId')
         .addSelect('COUNT(app.id)', 'count')
         .where('app.jobPostId IN (:...jobIds)', { jobIds })
@@ -291,16 +391,11 @@ export class JobPostsService {
       );
 
       data.forEach((jobItem) => {
-        jobItem.applicationsCount = countMap.get(jobItem.id) || 0;
+        (jobItem as JobPost & { applicationsCount: number }).applicationsCount =
+          countMap.get(jobItem.id) || 0;
       });
     }
-    const userDeptId = await getUserDepartmentId(
-      this.jobPostRepo.manager,
-      user,
-    );
-    this.logger.debug(
-      `[RBAC Debug] User: ${user.id} -> Resolved DeptId: ${userDeptId}`,
-    );
+
     const meta = PaginationMetaDto.create(page, limit, total);
     return { data, meta };
   }
@@ -313,35 +408,47 @@ export class JobPostsService {
     });
   }
 
+  // ========================================================
+  // 4. FIND ONE (LEAN DETAIL WITH CACHE, NO APP OVERLOAD)
+  // ========================================================
   async findOne(idOrCode: string, user?: ExtendedUser): Promise<JobPost> {
     const isUuid =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
         idOrCode,
       );
+    const cacheKey = `${this.CACHE_PREFIX}:detail:${idOrCode}`;
 
-    const qb = this.jobPostRepo
-      .createQueryBuilder('job')
-      .leftJoinAndSelect('job.recruitmentRequest', 'recruitmentRequest')
-      .leftJoinAndSelect('recruitmentRequest.department', 'department')
-      .leftJoinAndSelect('job.applications', 'applications')
-      .leftJoinAndSelect('applications.candidate', 'candidate')
-      .leftJoinAndSelect('applications.submissions', 'submissions');
-
-    if (isUuid) {
-      qb.where('job.id = :id', { id: idOrCode });
-    } else {
-      qb.where('job.jobCode = :code', { code: idOrCode });
-    }
-
-    // Sắp xếp hồ sơ ứng tuyển mới nhất lên trước
-    qb.addOrderBy('applications.createdAt', 'DESC');
-
-    const jobPost = await qb.getOne();
+    let jobPost = await this.cacheService.get<JobPost>(cacheKey);
 
     if (!jobPost) {
-      throw new NotFoundException(
-        `Không tìm thấy tin tuyển dụng với mã: ${idOrCode}`,
-      );
+      // Tiêu chí 2 & 3: Bỏ hoàn toàn việc join toàn bộ applications, candidate, submissions
+      const qb = this.jobPostRepo
+        .createQueryBuilder('job')
+        .leftJoinAndSelect('job.recruitmentRequest', 'recruitmentRequest')
+        .leftJoinAndSelect('recruitmentRequest.department', 'department')
+        .addSelect([
+          'job.jobDescription',
+          'job.requirements',
+          'job.benefits',
+          'job.extraBenefits',
+          'job.workingHoursDetail',
+        ]);
+
+      if (isUuid) {
+        qb.where('job.id = :id', { id: idOrCode });
+      } else {
+        qb.where('job.jobCode = :code', { code: idOrCode });
+      }
+
+      jobPost = await qb.getOne();
+
+      if (!jobPost) {
+        throw new NotFoundException(
+          `Không tìm thấy tin tuyển dụng với mã: ${idOrCode}`,
+        );
+      }
+
+      await this.cacheService.set(cacheKey, jobPost, 600); // Cache 10 phút
     }
 
     if (user) {
@@ -352,7 +459,7 @@ export class JobPostsService {
   }
 
   // ========================================================
-  // 3. MUTATE FORM
+  // 5. UPDATE
   // ========================================================
   async update(
     id: string,
@@ -438,12 +545,16 @@ export class JobPostsService {
     }
 
     jobPost.updatedBy = user.id;
+    const saved = await this.jobPostRepo.save(jobPost);
 
-    return this.jobPostRepo.save(jobPost);
+    // Tiêu chí 4: Xóa cache chủ động
+    await this.invalidateJobPostCache(saved);
+
+    return saved;
   }
 
   // ========================================================
-  // 4. ROUTE TO DEPARTMENT HEAD FOR REVIEW
+  // 6. ROUTE TO DEPARTMENT HEAD FOR REVIEW
   // ========================================================
   async sendForHeadApproval(id: string, user: ExtendedUser): Promise<JobPost> {
     const jobPost = await this.findOne(id, user);
@@ -464,6 +575,8 @@ export class JobPostsService {
     }
 
     const saved = await this.jobPostRepo.save(jobPost);
+    await this.invalidateJobPostCache(saved);
+
     const deptHeadId = jobPost.recruitmentRequest?.requesterId || user.id;
 
     this.eventEmitter.emit(
@@ -481,7 +594,7 @@ export class JobPostsService {
   }
 
   // ========================================================
-  // 5. DEPARTMENT HEAD REVIEW
+  // 7. DEPARTMENT HEAD REVIEW
   // ========================================================
   async reviewByHead(
     id: string,
@@ -507,10 +620,7 @@ export class JobPostsService {
       'dept',
     );
 
-    const userDeptId = await getUserDepartmentId(
-      this.jobPostRepo.manager,
-      user,
-    );
+    const userDeptId = await this.getCachedUserDepartmentId(user);
     const jobDeptId = this.getJobDepartmentId(jobPost);
     const isOwnDept = Boolean(userDeptId && userDeptId === jobDeptId);
 
@@ -540,6 +650,7 @@ export class JobPostsService {
 
     jobPost.updatedBy = user.id;
     const saved = await this.jobPostRepo.save(jobPost);
+    await this.invalidateJobPostCache(saved);
 
     this.eventEmitter.emit(
       'job_post.reviewed',
@@ -556,7 +667,7 @@ export class JobPostsService {
   }
 
   // ========================================================
-  // 6. MULTI-PLATFORM PUBLISHING
+  // 8. MULTI-PLATFORM PUBLISHING
   // ========================================================
   async publish(
     id: string,
@@ -601,7 +712,9 @@ export class JobPostsService {
         { delay: delayMs, removeOnComplete: true },
       );
 
-      return this.jobPostRepo.save(jobPost);
+      const scheduled = await this.jobPostRepo.save(jobPost);
+      await this.invalidateJobPostCache(scheduled);
+      return scheduled;
     }
 
     const mapping = await this.publishingService.dispatchToPlatforms(jobPost);
@@ -634,7 +747,7 @@ export class JobPostsService {
   }
 
   // ========================================================
-  // 7. CLOSE JOB POST
+  // 9. CLOSE JOB POST
   // ========================================================
   async closeJob(id: string, user: ExtendedUser): Promise<JobPost> {
     const jobPost = await this.findOne(id, user);
@@ -657,6 +770,8 @@ export class JobPostsService {
       await this.reqRepo.save(jobPost.recruitmentRequest);
     }
 
+    await this.invalidateJobPostCache(saved);
+
     this.eventEmitter.emit(
       'job_post.closed',
       new JobPostClosedEvent(
@@ -670,6 +785,48 @@ export class JobPostsService {
     return saved;
   }
 
+  // ========================================================
+  // 10. HELPER & CACHING UTILITIES
+  // ========================================================
+  private async getCachedUserDepartmentId(
+    user: ExtendedUser,
+  ): Promise<string | null> {
+    if (user.departmentId && user.departmentId !== 'GLOBAL') {
+      return user.departmentId;
+    }
+
+    const cacheKey = `${this.USER_DEPT_CACHE_PREFIX}:${user.id}`;
+    const cached = await this.cacheService.get<string>(cacheKey);
+    if (cached !== null && cached !== undefined) {
+      return cached;
+    }
+
+    const deptId = await getUserDepartmentId(this.jobPostRepo.manager, user);
+    if (deptId) {
+      await this.cacheService.set(cacheKey, deptId, 900); // 15 phút
+    }
+
+    return deptId ?? null;
+  }
+
+  private async invalidateJobPostCache(jobPost: JobPost): Promise<void> {
+    try {
+      const keys = [
+        `${this.CACHE_PREFIX}:detail:${jobPost.id}`,
+        `${this.CACHE_PREFIX}:detail:${jobPost.jobCode}`,
+      ];
+
+      if (jobPost.isTemplate) {
+        keys.push(`${this.CACHE_PREFIX}:templates`);
+      }
+
+      await Promise.all(keys.map((k) => this.cacheService.del(k)));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to invalidate job post cache: ${msg}`);
+    }
+  }
+
   private async assertViewPermission(
     jobPost: JobPost,
     user: ExtendedUser,
@@ -678,10 +835,7 @@ export class JobPostsService {
       return;
     }
 
-    const userDeptId = await getUserDepartmentId(
-      this.jobPostRepo.manager,
-      user,
-    );
+    const userDeptId = await this.getCachedUserDepartmentId(user);
     const canReadDept = hasPermission(user, 'ats_job_post', 'read', 'dept');
 
     const jobDeptId = this.getJobDepartmentId(jobPost);

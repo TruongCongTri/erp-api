@@ -37,6 +37,28 @@ export class PermissionsService {
     readonly cacheService: CacheService,
   ) {}
 
+  /**
+   * Helper nội bộ: Kiểm tra quyền có đang bị Role hoặc User sử dụng không bằng SQL Aggregate COUNT
+   * Triệt tiêu hoàn toàn việc kéo danh sách entity User/Role vào bộ nhớ Node.js
+   */
+  private async getUsageCounts(
+    permissionId: string,
+  ): Promise<{ rolesCount: number; usersCount: number }> {
+    const result = await this.permissionRepository
+      .createQueryBuilder('p')
+      .leftJoin('p.roles', 'r')
+      .leftJoin('p.users', 'u')
+      .select('COUNT(DISTINCT r.id)', 'rolesCount')
+      .addSelect('COUNT(DISTINCT u.id)', 'usersCount')
+      .where('p.id = :id', { id: permissionId })
+      .getRawOne<{ rolesCount: string; usersCount: string }>();
+
+    return {
+      rolesCount: parseInt(result?.rolesCount || '0', 10),
+      usersCount: parseInt(result?.usersCount || '0', 10),
+    };
+  }
+
   // --- STANDARD CRUD ---
   @CacheClear({
     key: [
@@ -52,8 +74,10 @@ export class PermissionsService {
     dto: CreatePermissionDto,
     user: ActiveUserData,
   ): Promise<Permission> {
-    const resource = await this.resourceRepository.findOneBy({
-      id: dto.resourceId,
+    // 1. Chỉ select các cột cần kiểm tra điều kiện
+    const resource = await this.resourceRepository.findOne({
+      where: { id: dto.resourceId },
+      select: { id: true, slug: true, isLive: true },
     });
     if (!resource)
       throw new NotFoundException(
@@ -64,37 +88,57 @@ export class PermissionsService {
 
     const generatedSlug = `${resource.slug}:${dto.action}:${dto.scope}`;
 
-    const existing = await this.permissionRepository.findOneBy({
-      slug: generatedSlug,
+    // const existing = await this.permissionRepository.findOneBy({
+    //   slug: generatedSlug,
+    // });
+    // 2. Dùng exists thay vì findOneBy để CSDL dừng quét ngay khi thấy bản ghi
+    const exists = await this.permissionRepository.exists({
+      where: { slug: generatedSlug },
     });
-    if (existing)
+    if (exists)
       throw new ConflictException(
         MESSAGES.ERROR.ALREADY_EXISTS(RESOURCES.PERMISSION.BASE),
       );
 
+    // const permission = this.permissionRepository.create({
+    //   ...dto,
+    //   slug: generatedSlug,
+    //   name: dto.name,
+    //   action: dto.action,
+    //   scope: dto.scope,
+    //   resource: resource,
+    //   isDefault: false,
+    //   createdBy: user.id,
+    //   createdByName: user.fullName,
+    //   updatedBy: user.id,
+    //   updatedByName: user.fullName,
+    //   isLive: false, // Starts as draft
+    // });
+
+    // const savedPerm = await this.permissionRepository.save(permission);
+
+    // // Explicit manual cross-module clear to guarantee synchronization
+    // if (this.cacheService.delPattern) {
+    //   await this.cacheService.delPattern('resources:list:*');
+    // }
+
+    // return savedPerm;
     const permission = this.permissionRepository.create({
       ...dto,
       slug: generatedSlug,
       name: dto.name,
       action: dto.action,
       scope: dto.scope,
-      resource: resource,
+      resource: { id: resource.id } as SystemResource,
       isDefault: false,
       createdBy: user.id,
       createdByName: user.fullName,
       updatedBy: user.id,
       updatedByName: user.fullName,
-      isLive: false, // Starts as draft
+      isLive: false,
     });
 
-    const savedPerm = await this.permissionRepository.save(permission);
-
-    // Explicit manual cross-module clear to guarantee synchronization
-    if (this.cacheService.delPattern) {
-      await this.cacheService.delPattern('resources:list:*');
-    }
-
-    return savedPerm;
+    return this.permissionRepository.save(permission);
   }
 
   @Cacheable({
@@ -124,11 +168,38 @@ export class PermissionsService {
       customFilters,
     });
 
-    // Merge relation loading so the UI table gets the resource details
+    // // Merge relation loading so the UI table gets the resource details
+    // findOptions.relations = { resource: true };
+
+    // const repo: Repository<Permission> = this.permissionRepository;
+    // const [items, total] = await repo.findAndCount(findOptions);
+
+    // return {
+    //   data: items,
+    //   meta: buildPaginationMeta(query, total),
+    // };
+    // 3. Selective Projection: Chỉ lấy các trường phục vụ hiển thị bảng
+
+    findOptions.select = {
+      id: true,
+      slug: true,
+      name: true,
+      action: true,
+      scope: true,
+      isLive: true,
+      isDefault: true,
+      createdAt: true,
+      resource: {
+        id: true,
+        name: true,
+        slug: true,
+      },
+    };
+
     findOptions.relations = { resource: true };
 
-    const repo: Repository<Permission> = this.permissionRepository;
-    const [items, total] = await repo.findAndCount(findOptions);
+    const [items, total] =
+      await this.permissionRepository.findAndCount(findOptions);
 
     return {
       data: items,
@@ -140,7 +211,7 @@ export class PermissionsService {
   @Cacheable({
     key: 'permissions:enums',
     forceRefresh: (bypassCache: unknown) => bypassCache === true,
-    ttlSeconds: 3600, // 1 hour
+    ttlSeconds: 86400, // Dữ liệu tĩnh enum, lưu cache 24h
   })
   // eslint-disable-next-line @typescript-eslint/require-await
   async getPermissionEnums(_bypassCache?: boolean) {
@@ -153,12 +224,32 @@ export class PermissionsService {
   @Cacheable({
     key: (id: unknown) => `permission:${id as string}`,
     forceRefresh: (_id: unknown, bypassCache: unknown) => bypassCache === true,
-    ttlSeconds: 86400, // 24 hours
+    ttlSeconds: 86400, // Dữ liệu tĩnh, lưu cache 24h
   })
   async findOne(id: string, _bypassCache?: boolean): Promise<Permission> {
+    // const permission = await this.permissionRepository.findOne({
+    //   where: { id },
+    //   relations: { resource: true }, // Added: Ensure the UI gets the resource details
+    // });
     const permission = await this.permissionRepository.findOne({
       where: { id },
-      relations: { resource: true }, // Added: Ensure the UI gets the resource details
+      relations: { resource: true },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        description: true,
+        action: true,
+        scope: true,
+        isDefault: true,
+        isLive: true,
+        createdAt: true,
+        resource: {
+          id: true,
+          name: true,
+          slug: true,
+        },
+      },
     });
     if (!permission) {
       throw new NotFoundException(
@@ -184,9 +275,14 @@ export class PermissionsService {
     dto: UpdatePermissionDto,
     user: ActiveUserData,
   ): Promise<Permission> {
+    // const permission = await this.permissionRepository.findOne({
+    //   where: { id },
+    //   relations: { roles: true, users: true, resource: true }, // Added resource
+    // });
     const permission = await this.permissionRepository.findOne({
       where: { id },
-      relations: { roles: true, users: true, resource: true }, // Added resource
+      relations: { resource: true },
+      select: { id: true, isLive: true, resource: { id: true } },
     });
     if (!permission)
       throw new NotFoundException(
@@ -195,40 +291,53 @@ export class PermissionsService {
 
     // Only update allowed fields
     if (dto.resourceId && dto.resourceId !== permission.resource.id) {
-      const resource = await this.resourceRepository.findOneBy({
-        id: dto.resourceId,
+      // const resource = await this.resourceRepository.findOneBy({
+      //   id: dto.resourceId,
+      // });
+      const resourceExists = await this.resourceRepository.exists({
+        where: { id: dto.resourceId },
       });
-      if (!resource)
+      if (!resourceExists)
         throw new NotFoundException(
           MESSAGES.ERROR.NOT_FOUND(RESOURCES.RESOURCE.BASE),
         );
-      permission.resource = resource;
+      // permission.resource = resource;
+      permission.resource = { id: dto.resourceId } as SystemResource;
     }
 
+    // if (dto.isLive === false && permission.isLive === true) {
+    //   const inUseByRoles = permission.roles?.length || 0;
+    //   const inUseByUsers = permission.users?.length || 0;
+    //   if (inUseByRoles > 0 || inUseByUsers > 0) {
+    //     throw new BadRequestException(
+    //       `Cannot draft. Assigned to ${inUseByRoles} role(s) and ${inUseByUsers} user(s).`,
+    //     );
+    //   }
+    // }
+    // 4. Kiểm tra ràng buộc chuyển sang Draft bằng aggregate query siêu nhẹ
     if (dto.isLive === false && permission.isLive === true) {
-      const inUseByRoles = permission.roles?.length || 0;
-      const inUseByUsers = permission.users?.length || 0;
-      if (inUseByRoles > 0 || inUseByUsers > 0) {
+      const { rolesCount, usersCount } = await this.getUsageCounts(id);
+      if (rolesCount > 0 || usersCount > 0) {
         throw new BadRequestException(
-          `Cannot draft. Assigned to ${inUseByRoles} role(s) and ${inUseByUsers} user(s).`,
+          `Cannot draft. Assigned to ${rolesCount} role(s) and ${usersCount} user(s).`,
         );
       }
     }
 
     Object.assign(permission, dto);
-
     permission.updatedBy = user.id;
     permission.updatedByName = user.fullName;
 
-    const savedPerm = await this.permissionRepository.save(permission);
+    // const savedPerm = await this.permissionRepository.save(permission);
 
-    // Explicit manual cross-module clear
-    if (this.cacheService.delPattern) {
-      await this.cacheService.delPattern('resources:list:*');
-      await this.cacheService.delPattern('resource:*');
-    }
+    // // Explicit manual cross-module clear
+    // if (this.cacheService.delPattern) {
+    //   await this.cacheService.delPattern('resources:list:*');
+    //   await this.cacheService.delPattern('resource:*');
+    // }
 
-    return savedPerm;
+    // return savedPerm;
+    return this.permissionRepository.save(permission);
   }
 
   @CacheClear({
@@ -244,9 +353,13 @@ export class PermissionsService {
     isPattern: true,
   })
   async remove(id: string, user: ActiveUserData): Promise<void> {
+    // const permission = await this.permissionRepository.findOne({
+    //   where: { id },
+    //   relations: { roles: true, users: true },
+    // });
     const permission = await this.permissionRepository.findOne({
       where: { id },
-      relations: { roles: true, users: true },
+      select: { id: true, isDefault: true },
     });
     if (!permission)
       throw new NotFoundException(
@@ -255,26 +368,41 @@ export class PermissionsService {
     if (permission.isDefault)
       throw new BadRequestException(MESSAGES.ERROR.PERMISSIONS.CANNOT_DELETE);
 
-    if (
-      (permission.roles && permission.roles.length > 0) ||
-      (permission.users && permission.users.length > 0)
-    )
+    // if (
+    //   (permission.roles && permission.roles.length > 0) ||
+    //   (permission.users && permission.users.length > 0)
+    // )
+    //   throw new BadRequestException(
+    //     MESSAGES.ERROR.IN_USE(RESOURCES.PERMISSION.BASE),
+    //   );
+
+    // // Stamp the deleter's info BEFORE deleting
+    // permission.deletedBy = user.id;
+    // permission.deletedByName = user.fullName;
+    // await this.permissionRepository.save(permission);
+
+    // await this.permissionRepository.softRemove(permission);
+
+    // // Explicit manual cross-module clear to guarantee synchronization
+    // if (this.cacheService.delPattern) {
+    //   await this.cacheService.delPattern('resources:list:*');
+    //   await this.cacheService.delPattern('resource:*');
+    // }
+
+    // 5. Kiểm tra quyền đang sử dụng qua COUNT, không load danh sách Role/User
+    const { rolesCount, usersCount } = await this.getUsageCounts(id);
+    if (rolesCount > 0 || usersCount > 0) {
       throw new BadRequestException(
         MESSAGES.ERROR.IN_USE(RESOURCES.PERMISSION.BASE),
       );
-
-    // Stamp the deleter's info BEFORE deleting
-    permission.deletedBy = user.id;
-    permission.deletedByName = user.fullName;
-    await this.permissionRepository.save(permission);
-
-    await this.permissionRepository.softRemove(permission);
-
-    // Explicit manual cross-module clear to guarantee synchronization
-    if (this.cacheService.delPattern) {
-      await this.cacheService.delPattern('resources:list:*');
-      await this.cacheService.delPattern('resource:*');
     }
+
+    await this.permissionRepository.update(id, {
+      deletedBy: user.id,
+      deletedByName: user.fullName,
+    });
+
+    await this.permissionRepository.softDelete(id);
   }
 
   // --- SPECIALIZED METHODS ---
@@ -320,39 +448,59 @@ export class PermissionsService {
     dto: ToggleStatusDto,
     user: ActiveUserData,
   ): Promise<Permission> {
+    // const permission = await this.permissionRepository.findOne({
+    //   where: { id },
+    //   relations: { roles: true, users: true },
+    // });
     const permission = await this.permissionRepository.findOne({
       where: { id },
-      relations: { roles: true, users: true },
+      select: { id: true, isLive: true },
     });
 
     if (!permission) throw new NotFoundException('Permission not found');
     if (permission.isLive === dto.isLive) return permission;
 
     // SAFETY CHECK: Transitioning from Live (true) to Draft (false)
-    if (dto.isLive === false) {
-      const inUseByRoles = permission.roles?.length || 0;
-      const inUseByUsers = permission.users?.length || 0;
+    // if (dto.isLive === false) {
+    //   const inUseByRoles = permission.roles?.length || 0;
+    //   const inUseByUsers = permission.users?.length || 0;
 
-      if (inUseByRoles > 0 || inUseByUsers > 0)
+    //   if (inUseByRoles > 0 || inUseByUsers > 0)
+    //     throw new BadRequestException(
+    //       `Cannot draft. Assigned to ${inUseByRoles} role(s) and ${inUseByUsers} user(s).`,
+    //     );
+    // }
+    if (dto.isLive === false) {
+      const { rolesCount, usersCount } = await this.getUsageCounts(id);
+      if (rolesCount > 0 || usersCount > 0) {
         throw new BadRequestException(
-          `Cannot draft. Assigned to ${inUseByRoles} role(s) and ${inUseByUsers} user(s).`,
+          `Cannot draft. Assigned to ${rolesCount} role(s) and ${usersCount} user(s).`,
         );
+      }
     }
+
+    // permission.isLive = dto.isLive;
+
+    // permission.updatedBy = user.id;
+    // permission.updatedByName = user.fullName;
+
+    // const savedPerm = await this.permissionRepository.save(permission);
+
+    // // Explicit manual cross-module clear
+    // if (this.cacheService.delPattern) {
+    //   await this.cacheService.delPattern('resources:list:*');
+    //   await this.cacheService.delPattern('resource:*');
+    // }
+
+    // return savedPerm;
+    await this.permissionRepository.update(id, {
+      isLive: dto.isLive,
+      updatedBy: user.id,
+      updatedByName: user.fullName,
+    });
 
     permission.isLive = dto.isLive;
-
-    permission.updatedBy = user.id;
-    permission.updatedByName = user.fullName;
-
-    const savedPerm = await this.permissionRepository.save(permission);
-
-    // Explicit manual cross-module clear
-    if (this.cacheService.delPattern) {
-      await this.cacheService.delPattern('resources:list:*');
-      await this.cacheService.delPattern('resource:*');
-    }
-
-    return savedPerm;
+    return permission;
   }
 
   // --- RECYCLE BIN ---
@@ -360,15 +508,29 @@ export class PermissionsService {
   @Cacheable({
     key: 'permissions:recycle-bin',
     forceRefresh: (bypassCache: unknown) => bypassCache === true,
-    ttlSeconds: 3600,
+    ttlSeconds: 1800,
   })
   async findRecycleBin(_bypassCache?: boolean): Promise<Permission[]> {
+    // return this.permissionRepository.find({
+    //   where: {
+    //     deletedAt: Not(IsNull()), // Only get records where deletedAt has a value
+    //   },
+    //   withDeleted: true, // Force TypeORM to bypass the soft-delete filter
+    //   order: { deletedAt: 'DESC' }, // Show most recently deleted first
+    // });
     return this.permissionRepository.find({
-      where: {
-        deletedAt: Not(IsNull()), // Only get records where deletedAt has a value
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        deletedAt: true,
+        deletedByName: true,
       },
-      withDeleted: true, // Force TypeORM to bypass the soft-delete filter
-      order: { deletedAt: 'DESC' }, // Show most recently deleted first
+      where: {
+        deletedAt: Not(IsNull()),
+      },
+      withDeleted: true,
+      order: { deletedAt: 'DESC' },
     });
   }
 
@@ -385,9 +547,14 @@ export class PermissionsService {
     isPattern: true,
   })
   async restore(id: string, user: ActiveUserData): Promise<Permission> {
+    // const permission = await this.permissionRepository.findOne({
+    //   where: { id },
+    //   withDeleted: true, // Must include this to find the deleted record!
+    // });
     const permission = await this.permissionRepository.findOne({
       where: { id },
-      withDeleted: true, // Must include this to find the deleted record!
+      withDeleted: true,
+      select: { id: true, deletedAt: true },
     });
 
     if (!permission) {
@@ -400,23 +567,33 @@ export class PermissionsService {
       throw new BadRequestException('This resource is not in the recycle bin.');
     }
 
-    // 1. Clear the deletion audit trail so it looks brand new
+    // // 1. Clear the deletion audit trail so it looks brand new
+    // permission.deletedAt = null;
+    // permission.deletedBy = null;
+    // permission.deletedByName = null;
+
+    // // 2. Stamp the restoration event in the update audit trail
+    // permission.updatedBy = user.id;
+    // permission.updatedByName = user.fullName;
+
+    // const savedPerm = await this.permissionRepository.save(permission);
+
+    // // Explicit manual cross-module clear
+    // if (this.cacheService.delPattern) {
+    //   await this.cacheService.delPattern('resources:list:*');
+    //   await this.cacheService.delPattern('resource:*');
+    // }
+
+    // return savedPerm;
+    await this.permissionRepository.restore(id);
+    await this.permissionRepository.update(id, {
+      deletedBy: null,
+      deletedByName: null,
+      updatedBy: user.id,
+      updatedByName: user.fullName,
+    });
+
     permission.deletedAt = null;
-    permission.deletedBy = null;
-    permission.deletedByName = null;
-
-    // 2. Stamp the restoration event in the update audit trail
-    permission.updatedBy = user.id;
-    permission.updatedByName = user.fullName;
-
-    const savedPerm = await this.permissionRepository.save(permission);
-
-    // Explicit manual cross-module clear
-    if (this.cacheService.delPattern) {
-      await this.cacheService.delPattern('resources:list:*');
-      await this.cacheService.delPattern('resource:*');
-    }
-
-    return savedPerm;
+    return permission;
   }
 }

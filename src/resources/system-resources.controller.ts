@@ -71,17 +71,25 @@ export class SystemResourcesController {
 
   @Get()
   @RequirePermissions('it_system:read:any') // Read-only admin view
-  async findAll(
-    @Query() query: ResourceQueryDto,
-    @Query('refresh') refresh?: string,
-  ) {
+  async findAll(@Query() query: ResourceQueryDto) {
     // Delete the refresh key from the query object so it doesn't skew the JSON.stringify cache key!
-    if (query['refresh']) delete query['refresh'];
+    // if (query['refresh']) delete query['refresh'];
 
+    // const forceRefresh = refresh === 'true';
+
+    // const result = await this.systemResourcesService.findAll(
+    //   query,
+    //   forceRefresh,
+    // );
+
+    // Tách param bypass cache ra khỏi queryDto một cách bất biến (Immutable)
+    const { refresh, ...cleanQuery } = query as ResourceQueryDto & {
+      refresh?: string;
+    };
     const forceRefresh = refresh === 'true';
 
     const result = await this.systemResourcesService.findAll(
-      query,
+      cleanQuery,
       forceRefresh,
     );
 
@@ -104,8 +112,10 @@ export class SystemResourcesController {
 
   @Get(ROUTES.GENERAL.RECYCLE_BIN) // /api/v1/resources/recycle-bin
   @RequirePermissions('it_system:read:any')
-  async getRecycleBin() {
-    const data = await this.systemResourcesService.findRecycleBin();
+  async getRecycleBin(@Query('refresh') refresh?: string) {
+    const data = await this.systemResourcesService.findRecycleBin(
+      refresh === 'true',
+    );
     return {
       data,
       message: 'Recycle bin retrieved successfully', // Replace with your MESSAGES constant

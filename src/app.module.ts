@@ -60,6 +60,7 @@ import { PublishingAutomationModule } from './publishing-automation/publishing-a
 
     // 3. Global Rate Limiter (Throttler) with Redis Storage
     ThrottlerModule.forRootAsync({
+      imports: [AuthModule],
       // We inject the globally available Redis client token
       inject: ['REDIS_CLIENT'],
       useFactory: (redisClient: Redis) => {
@@ -93,34 +94,18 @@ import { PublishingAutomationModule } from './publishing-automation/publishing-a
     CronModule,
 
     // local docker redis
-    // BullModule.forRootAsync({
-    //   imports: [ConfigModule],
-    //   useFactory: (configService: ConfigService) => ({
-    //     connection: {
-    //       host: configService.get<string>('REDIS_HOST', 'localhost'),
-    //       port: configService.get<number>('REDIS_PORT', 6379),
-    //       // password: configService.get('REDIS_PASSWORD'),
-    //     },
-    //   }),
-    //   inject: [ConfigService],
-    // }),
-
-    // Upstash-compatible BullMQ Connection
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
+
       useFactory: (configService: ConfigService) => {
         const redisUrl = configService.get<string>('REDIS_URL');
-        const isTls =
-          configService.get<string>('REDIS_TLS') === 'true' ||
-          Boolean(redisUrl?.startsWith('rediss://'));
 
         if (redisUrl) {
           return {
             connection: {
               url: redisUrl,
-              tls: isTls ? { rejectUnauthorized: false } : undefined,
-              maxRetriesPerRequest: null, // Critical: BullMQ will crash without this set to null
+              maxRetriesPerRequest: null, // 👈 BẮT BUỘC để BullMQ không bị crash
             },
           };
         }
@@ -128,14 +113,45 @@ import { PublishingAutomationModule } from './publishing-automation/publishing-a
         return {
           connection: {
             host: configService.get<string>('REDIS_HOST', 'localhost'),
-            port: configService.get<number>('REDIS_PORT', 6379),
+            port: Number(configService.get('REDIS_PORT')) || 6379,
             password: configService.get<string>('REDIS_PASSWORD') || undefined,
-            tls: isTls ? { rejectUnauthorized: false } : undefined,
-            maxRetriesPerRequest: null, // Critical: BullMQ will crash without this set to null
+            maxRetriesPerRequest: null, // 👈 BẮT BUỘC
           },
         };
       },
     }),
+
+    // Upstash-compatible BullMQ Connection
+    // BullModule.forRootAsync({
+    //   imports: [ConfigModule],
+    //   inject: [ConfigService],
+    //   useFactory: (configService: ConfigService) => {
+    //     const redisUrl = configService.get<string>('REDIS_URL');
+    //     const isTls =
+    //       configService.get<string>('REDIS_TLS') === 'true' ||
+    //       Boolean(redisUrl?.startsWith('rediss://'));
+
+    //     if (redisUrl) {
+    //       return {
+    //         connection: {
+    //           url: redisUrl,
+    //           tls: isTls ? { rejectUnauthorized: false } : undefined,
+    //           maxRetriesPerRequest: null, // Critical: BullMQ will crash without this set to null
+    //         },
+    //       };
+    //     }
+
+    //     return {
+    //       connection: {
+    //         host: configService.get<string>('REDIS_HOST', 'localhost'),
+    //         port: configService.get<number>('REDIS_PORT', 6379),
+    //         password: configService.get<string>('REDIS_PASSWORD') || undefined,
+    //         tls: isTls ? { rejectUnauthorized: false } : undefined,
+    //         maxRetriesPerRequest: null, // Critical: BullMQ will crash without this set to null
+    //       },
+    //     };
+    //   },
+    // }),
 
     // 6. Application Modules
     AuthModule,

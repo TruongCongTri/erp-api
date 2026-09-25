@@ -1,6 +1,6 @@
 import Redis from 'ioredis';
 import { Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
+import { JwtModule, JwtModuleOptions } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { HttpModule } from '@nestjs/axios';
@@ -24,6 +24,12 @@ import { Role } from 'src/roles/entities/role.entity';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
         secret: configService.get<string>('JWT_SECRET') || 'fallback_secret',
+        signOptions: {
+          expiresIn: (configService.get<string>('JWT_EXPIRES_IN') ||
+            '15m') as NonNullable<
+            NonNullable<JwtModuleOptions['signOptions']>['expiresIn']
+          >,
+        },
       }),
     }),
     MailerModule.forRootAsync({
@@ -35,15 +41,14 @@ import { Role } from 'src/roles/entities/role.entity';
           port: configService.get<number>('SMTP_PORT') || 587,
           secure: configService.get<boolean>('SMTP_SECURE') || false,
           auth: {
-            user:
-              configService.get<string>('SMTP_USER') || 'your-email@gmail.com',
-            pass: configService.get<string>('SMTP_PASS') || 'your-app-password',
+            user: configService.get<string>('SMTP_USER') || '',
+            pass: configService.get<string>('SMTP_PASS') || '',
           },
         },
         defaults: {
           from:
             configService.get<string>('SMTP_FROM') ||
-            '"No Reply" <noreply@yourdomain.com>',
+            '"Chính Nam HR" <noreply@chinhnam.vn>',
         },
       }),
     }),
@@ -70,11 +75,12 @@ import { Role } from 'src/roles/entities/role.entity';
             return delay;
           },
           maxRetriesPerRequest: 3,
+          enableOfflineQueue: false, // Tránh ngập bộ nhớ RAM khi Redis ngắt kết nối
         });
 
         // Catch errors so they don't bubble up as "Unhandled error event"
         client.on('error', (err) => {
-          console.warn('Redis connection error:', err.message);
+          console.warn('[Redis Client Warning]:', err.message);
         });
 
         return client;

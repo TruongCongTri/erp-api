@@ -8,6 +8,7 @@ import {
   IsBoolean,
   Length,
 } from 'class-validator';
+import { UserStatus } from 'src/users/enums/user-status.enum';
 
 export class RegisterDto {
   @IsEmail({}, { message: 'Invalid email format' })
@@ -99,6 +100,7 @@ export class VerifyOtpDto {
 export interface JwtPayload {
   sub: string;
   email: string;
+  fullName: string;
   role?: string;
   sessionId: string;
   deviceInfo: string;
@@ -116,4 +118,28 @@ export class RefreshTokenDto {
   @IsString()
   @IsNotEmpty({ message: 'Refresh token is required' })
   refreshToken!: string;
+}
+
+export interface JwtUser {
+  id: string;
+  sub: string;
+  email: string;
+  fullName: string;
+  role: { slug: string };
+  permissions: string[];
+  sessionId: string;
+  deviceInfo: string;
+}
+
+/**
+ * Snapshot thông tin và quyền hạn của người dùng được lưu trong Redis
+ * Phục vụ xác thực O(1) ở JwtStrategy mà không cần quét lại PostgreSQL
+ */
+export interface AuthUserSnapshot {
+  id: string;
+  email: string;
+  fullName: string;
+  status: UserStatus;
+  roleSlug: string;
+  permissions: string[];
 }

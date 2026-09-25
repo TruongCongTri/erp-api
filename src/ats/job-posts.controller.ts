@@ -9,7 +9,11 @@ import {
   UseGuards,
   UseInterceptors,
   ParseUUIDPipe,
+  Res,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { JobPostsService } from './job-posts.service';
 import { AtsAiService } from './ats-ai.service';
 import {
@@ -61,7 +65,7 @@ export class JobPostsController {
   }
 
   // ==========================================
-  // REUSABLE TEMPLATES LIBRARY
+  // REUSABLE TEMPLATES LIBRARY (HTTP CACHED)
   // ==========================================
   @Get('templates')
   @RequireAnyPermissions(
@@ -70,8 +74,12 @@ export class JobPostsController {
     'ats:jobs:read',
     'ats:jobs:create',
   )
-  async getTemplates() {
+  async getTemplates(@Res({ passthrough: true }) res: Response) {
     const data = await this.jobPostsService.getTemplates();
+    res.setHeader(
+      'Cache-Control',
+      'private, max-age=300, stale-while-revalidate=60',
+    );
     return {
       success: true,
       data,
@@ -118,7 +126,14 @@ export class JobPostsController {
     @Query() query: QueryJobPostDto,
     @CurrentUser() user: ActiveUserData,
   ) {
-    const result = await this.jobPostsService.findAll(query, user);
+    // Tiêu chí 1: Khống chế phân trang trần (Tối đa 100 dòng) bảo vệ Disk I/O
+    const boundedQuery: QueryJobPostDto = {
+      ...query,
+      page: Math.max(1, Number(query.page) || 1),
+      limit: Math.min(Math.max(1, Number(query.limit) || 20), 100),
+    };
+
+    const result = await this.jobPostsService.findAll(boundedQuery, user);
     return {
       success: true,
       data: result.data,
@@ -128,6 +143,7 @@ export class JobPostsController {
   }
 
   @Get(':id')
+  @HttpCode(HttpStatus.OK)
   @RequireAnyPermissions(
     'ats_job_post:read:any',
     'ats_job_post:read:dept',
@@ -135,10 +151,17 @@ export class JobPostsController {
     'ats:jobs:manage',
   )
   async findOne(
-    @Param('id', ParseUUIDPipe) id: string,
+    // @Param('id', ParseUUIDPipe) id: string,
+    @Param('idOrCode') idOrCode: string,
     @CurrentUser() user: ActiveUserData,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    const data = await this.jobPostsService.findOne(id, user);
+    const data = await this.jobPostsService.findOne(idOrCode, user);
+    // Tiêu chí 4: Header HTTP Caching cho client/gateway (Cache 60s)
+    res.setHeader(
+      'Cache-Control',
+      'private, max-age=60, stale-while-revalidate=30',
+    );
     return {
       success: true,
       data,
@@ -147,6 +170,7 @@ export class JobPostsController {
   }
 
   @Patch(':id')
+  @HttpCode(HttpStatus.OK)
   @RequireAnyPermissions(
     'ats_job_post:update:any',
     'ats_job_post:update:dept',

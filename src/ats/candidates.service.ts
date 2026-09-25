@@ -10,7 +10,6 @@ import {
   EntityManager,
   Repository,
   SelectQueryBuilder,
-  WhereExpressionBuilder,
 } from 'typeorm';
 import { CandidateProfile } from './entities/candidate-profile.entity';
 import { CandidateIdentityDto } from './dto/candidate-submission.dto';
@@ -23,13 +22,14 @@ import {
   getUserDepartmentId,
   ExtendedUser,
 } from '../common/utils/ats-rbac.util';
+import { CacheService } from 'src/common/cache/cache.service';
 
-export interface RoleObject {
-  id?: string;
-  name?: string;
-  code?: string;
-  slug?: string;
-}
+// export interface RoleObject {
+//   id?: string;
+//   name?: string;
+//   code?: string;
+//   slug?: string;
+// }
 
 // interface RawDeptRow {
 //   id?: string;
@@ -40,14 +40,17 @@ export interface RoleObject {
 @Injectable()
 export class CandidatesService {
   private readonly logger = new Logger(CandidatesService.name);
+  private readonly CACHE_PREFIX = 'ats:candidates';
+  private readonly USER_DEPT_CACHE_PREFIX = 'user:department_scope';
 
   constructor(
     @InjectRepository(CandidateProfile)
     private readonly candidateRepo: Repository<CandidateProfile>,
+    private readonly cacheService: CacheService,
   ) {}
 
   // ========================================================
-  // 1. QUERY ALL CANDIDATES (DÙNG CHO CANDIDATES MANAGEMENT PAGE)
+  // 1. QUERY ALL CANDIDATES (OPTIMIZED LEAN LIST)
   // ========================================================
   async findAll(query: QueryCandidatesDto, user: ExtendedUser) {
     const {
@@ -62,23 +65,40 @@ export class CandidatesService {
     } = query;
     const skip = (page - 1) * limit;
 
+    // Tiêu chí 2 & 3: Loại bỏ submissions khỏi danh sách để tránh tích Descartes (Cartesian explosion)
+    // Chỉ join các bảng cần thiết với SELECT chỉ định
     const qb: SelectQueryBuilder<CandidateProfile> = this.candidateRepo
       .createQueryBuilder('candidate')
-      .leftJoinAndSelect('candidate.applications', 'application')
-      .leftJoinAndSelect('application.jobPost', 'jobPost')
-      .leftJoinAndSelect('jobPost.recruitmentRequest', 'recruitmentRequest')
-      .leftJoinAndSelect('recruitmentRequest.department', 'department')
-      .leftJoinAndSelect('application.submissions', 'submission');
+      .leftJoin('candidate.applications', 'application')
+      .leftJoin('application.jobPost', 'jobPost')
+      .leftJoin('jobPost.recruitmentRequest', 'recruitmentRequest')
+      .select([
+        'candidate.id',
+        'candidate.fullName',
+        'candidate.email',
+        'candidate.phoneNumber',
+        'candidate.linkedInUrl',
+        'candidate.portfolioUrl',
+        'candidate.createdAt',
+        'candidate.updatedAt',
+        // Thông tin ứng tuyển tóm tắt (Lean Application Summary)
+        'application.id',
+        'application.status',
+        'application.aiScore',
+        'application.aiTier',
+        'application.createdAt',
+        // Thông tin tin tuyển dụng tóm tắt
+        'jobPost.id',
+        'jobPost.jobCode',
+        'jobPost.publicTitle',
+      ]);
 
-    // ── RBAC Scope Enforcement cho Candidates ──
+    // ── RBAC Scope Enforcement với Cached User Dept ──
     const canReadAny = hasPermission(user, 'ats_candidate', 'read', 'any');
     const canReadDept = hasPermission(user, 'ats_candidate', 'read', 'dept');
 
     if (!canReadAny) {
-      const userDeptId = await getUserDepartmentId(
-        this.candidateRepo.manager,
-        user,
-      );
+      const userDeptId = await this.getCachedUserDepartmentId(user);
 
       if (canReadDept && userDeptId) {
         // Trưởng phòng ban: Chỉ xem ứng viên đã ứng tuyển vào các vị trí thuộc phòng ban mình phụ trách
@@ -97,38 +117,53 @@ export class CandidatesService {
         qb.andWhere('1 = 0');
       }
     }
-    // 1. Tìm kiếm theo Tên, Email, Số điện thoại hoặc Kỹ năng
+    // ── Tiêu chí 1: Tìm kiếm tối ưu tận dụng Index B-Tree ──
     if (search?.trim()) {
-      const keyword = `%${search.trim()}%`;
+      const cleanSearch = search.trim();
       qb.andWhere(
-        new Brackets((sub: WhereExpressionBuilder) => {
+        new Brackets((sub) => {
           sub
-            .where('LOWER(candidate.fullName) LIKE LOWER(:keyword)', {
-              keyword,
+            .where('candidate.fullName ILIKE :search', {
+              search: `%${cleanSearch}%`,
             })
-            .orWhere('LOWER(candidate.email) LIKE LOWER(:keyword)', { keyword })
-            .orWhere('candidate.phoneNumber LIKE :keyword', { keyword });
+            .orWhere('candidate.email ILIKE :search', {
+              search: `%${cleanSearch}%`,
+            })
+            .orWhere('candidate.phoneNumber LIKE :search', {
+              search: `%${cleanSearch}%`,
+            });
         }),
       );
     }
 
-    // 2. Lọc theo trạng thái vòng tuyển dụng (ApplicationStatus)
+    // ── Bộ lọc trạng thái và vị trí tuyển dụng ──
     if (status) {
       qb.andWhere('application.status = :status', { status });
     }
 
-    // 3. Lọc theo nguồn kênh ứng tuyển (PlatformSource)
-    if (platform) {
-      qb.andWhere('submission.platformSource = :platform', { platform });
-    }
-
-    // 4. Lọc theo tin tuyển dụng cụ thể (JobPostId)
     if (jobPostId) {
       qb.andWhere('application.jobPostId = :jobPostId', { jobPostId });
     }
 
-    qb.orderBy(`candidate.${sortBy}`, sortOrder);
-    qb.addOrderBy('application.createdAt', 'DESC');
+    if (platform) {
+      // Dùng EXISTS subquery thay vì JOIN submissions trực tiếp để giữ nguyên số lượng row phân trang
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1 FROM application_submissions sub 
+          WHERE sub.application_id = application.id 
+          AND sub.platform_source = :platform
+        )`,
+        { platform },
+      );
+    }
+
+    // Tiêu chí 1: Whitelist sắp xếp theo Index để tránh File Sort đĩa
+    const validSortFields = ['createdAt', 'fullName', 'email'];
+    const safeSortBy = validSortFields.includes(sortBy) ? sortBy : 'createdAt';
+
+    qb.orderBy(`candidate.${safeSortBy}`, sortOrder);
+    qb.addOrderBy('candidate.id', sortOrder);
+
     qb.skip(skip).take(limit);
 
     const [data, total] = await qb.getManyAndCount();
@@ -138,23 +173,33 @@ export class CandidatesService {
   }
 
   // ========================================================
-  // 2. GET CANDIDATE DETAIL (DÙNG CHO DRAWER & DETAIL PAGE)
+  // 2. GET CANDIDATE DETAIL (HOT CACHED)
   // ========================================================
   async findOne(id: string, user?: ExtendedUser): Promise<CandidateProfile> {
-    const candidate = await this.candidateRepo
-      .createQueryBuilder('candidate')
-      .leftJoinAndSelect('candidate.applications', 'application')
-      .leftJoinAndSelect('application.jobPost', 'jobPost')
-      .leftJoinAndSelect('jobPost.recruitmentRequest', 'recruitmentRequest')
-      .leftJoinAndSelect('recruitmentRequest.department', 'department')
-      .leftJoinAndSelect('application.submissions', 'submission')
-      .where('candidate.id = :id', { id })
-      .addOrderBy('application.createdAt', 'DESC')
-      .addOrderBy('submission.createdAt', 'DESC')
-      .getOne();
+    const cacheKey = `${this.CACHE_PREFIX}:detail:${id}`;
+
+    // Tiêu chí 4: Hot Read Cache
+    let candidate = await this.cacheService.get<CandidateProfile>(cacheKey);
 
     if (!candidate) {
-      throw new NotFoundException(`Không tìm thấy ứng viên với mã ID: ${id}`);
+      // Chi tiết hồ sơ: Tải quan hệ có thứ tự, loại trừ các trường text lớn (đã select: false ở entity)
+      candidate = await this.candidateRepo
+        .createQueryBuilder('candidate')
+        .leftJoinAndSelect('candidate.applications', 'application')
+        .leftJoinAndSelect('application.jobPost', 'jobPost')
+        .leftJoinAndSelect('jobPost.recruitmentRequest', 'recruitmentRequest')
+        .leftJoinAndSelect('recruitmentRequest.department', 'department')
+        .leftJoinAndSelect('application.submissions', 'submission')
+        .where('candidate.id = :id', { id })
+        .orderBy('application.createdAt', 'DESC')
+        .addOrderBy('submission.createdAt', 'DESC')
+        .getOne();
+
+      if (!candidate) {
+        throw new NotFoundException(`Không tìm thấy ứng viên với mã ID: ${id}`);
+      }
+
+      await this.cacheService.set(cacheKey, candidate, 300); // Cache 5 phút
     }
 
     if (user) {
@@ -162,6 +207,173 @@ export class CandidatesService {
     }
 
     return candidate;
+  }
+
+  // ========================================================
+  // 3. DEDUPLICATION & IDENTITY ENRICHMENT
+  // ========================================================
+  /**
+   * Khử trùng lặp và đồng bộ danh tính ứng viên (Ngoài Transaction)
+   */
+  async findOrCreateProfile(
+    data: CandidateIdentityDto,
+  ): Promise<CandidateProfile> {
+    const normalizedEmail = data.email.trim().toLowerCase();
+    const normalizedPhone = data.phoneNumber.trim().replace(/\s+/g, '');
+
+    // Tiêu chí 1: Truy vấn c.email trực tiếp để ăn B-Tree Unique Index (Không dùng LOWER(c.email))
+    let candidate = await this.candidateRepo
+      .createQueryBuilder('c')
+      .where('c.email = :email', { email: normalizedEmail })
+      .getOne();
+
+    // Đối chiếu tiếp số điện thoại nếu email chưa khớp và số điện thoại hợp lệ
+    if (!candidate && normalizedPhone && normalizedPhone.length >= 9) {
+      candidate = await this.candidateRepo
+        .createQueryBuilder('c')
+        .where('c.phoneNumber = :phone', { phone: normalizedPhone })
+        .getOne();
+    }
+
+    if (candidate) {
+      const isUpdated = this.enrichCandidateData(
+        candidate,
+        data,
+        normalizedPhone,
+      );
+      if (isUpdated) {
+        candidate = await this.candidateRepo.save(candidate);
+        await this.invalidateCandidateCache(candidate.id);
+        this.logger.log(
+          `[Deduplication] Đã cập nhật ứng viên: ${candidate.id}`,
+        );
+      }
+      return candidate;
+    }
+
+    // Tạo ứng viên mới
+    const newCandidate = this.candidateRepo.create({
+      fullName: data.fullName.trim(),
+      email: normalizedEmail,
+      phoneNumber: normalizedPhone,
+      linkedInUrl: data.linkedInUrl ?? null,
+      portfolioUrl: data.portfolioUrl ?? null,
+    });
+
+    return this.candidateRepo.save(newCandidate);
+  }
+
+  /**
+   * Khử trùng lặp và đồng bộ danh tính trong Transaction của TypeORM
+   */
+  async findOrCreateProfileWithManager(
+    manager: EntityManager,
+    data: CandidateIdentityDto,
+  ): Promise<CandidateProfile> {
+    const repo = manager.getRepository(CandidateProfile);
+    const normalizedEmail = data.email.trim().toLowerCase();
+    const normalizedPhone = data.phoneNumber.trim().replace(/\s+/g, '');
+
+    // Tiêu chí 1: Ăn B-Tree Unique Index
+    let candidate = await repo
+      .createQueryBuilder('c')
+      .where('c.email = :email', { email: normalizedEmail })
+      .getOne();
+
+    if (!candidate && normalizedPhone && normalizedPhone.length >= 9) {
+      candidate = await repo
+        .createQueryBuilder('c')
+        .where('c.phoneNumber = :phone', { phone: normalizedPhone })
+        .getOne();
+    }
+
+    if (candidate) {
+      const isUpdated = this.enrichCandidateData(
+        candidate,
+        data,
+        normalizedPhone,
+      );
+      if (isUpdated) {
+        candidate = await repo.save(candidate);
+        await this.invalidateCandidateCache(candidate.id);
+        this.logger.log(
+          `[Deduplication] Đã cập nhật ứng viên trong Tx: ${candidate.id}`,
+        );
+      }
+      return candidate;
+    }
+
+    // 3. Khởi tạo và lưu hồ sơ ứng viên mới trong Transaction
+    const newCandidate = repo.create({
+      fullName: data.fullName.trim(),
+      email: normalizedEmail,
+      phoneNumber: normalizedPhone,
+      linkedInUrl: data.linkedInUrl ?? null,
+      portfolioUrl: data.portfolioUrl ?? null,
+    });
+
+    return repo.save(newCandidate);
+  }
+
+  // ========================================================
+  // 4. HELPER & CACHING UTILITIES
+  // ========================================================
+
+  private enrichCandidateData(
+    candidate: CandidateProfile,
+    data: CandidateIdentityDto,
+    normalizedPhone: string,
+  ): boolean {
+    let hasUpdate = false;
+
+    if (!candidate.phoneNumber && normalizedPhone) {
+      candidate.phoneNumber = normalizedPhone;
+      hasUpdate = true;
+    }
+    if (!candidate.linkedInUrl && data.linkedInUrl) {
+      candidate.linkedInUrl = data.linkedInUrl;
+      hasUpdate = true;
+    }
+    if (!candidate.portfolioUrl && data.portfolioUrl) {
+      candidate.portfolioUrl = data.portfolioUrl;
+      hasUpdate = true;
+    }
+    if (candidate.fullName !== data.fullName.trim()) {
+      candidate.fullName = data.fullName.trim();
+      hasUpdate = true;
+    }
+
+    return hasUpdate;
+  }
+
+  private async getCachedUserDepartmentId(
+    user: ExtendedUser,
+  ): Promise<string | null> {
+    if (user.departmentId && user.departmentId !== 'GLOBAL') {
+      return user.departmentId;
+    }
+
+    const cacheKey = `${this.USER_DEPT_CACHE_PREFIX}:${user.id}`;
+    const cached = await this.cacheService.get<string>(cacheKey);
+    if (cached !== null && cached !== undefined) {
+      return cached;
+    }
+
+    const deptId = await getUserDepartmentId(this.candidateRepo.manager, user);
+    if (deptId) {
+      await this.cacheService.set(cacheKey, deptId, 900); // 15 phút
+    }
+
+    return deptId ?? null;
+  }
+
+  private async invalidateCandidateCache(id: string): Promise<void> {
+    try {
+      await this.cacheService.del(`${this.CACHE_PREFIX}:detail:${id}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to invalidate candidate cache: ${msg}`);
+    }
   }
 
   private async assertViewPermission(
@@ -173,11 +385,7 @@ export class CandidatesService {
     }
 
     const canReadDept = hasPermission(user, 'ats_candidate', 'read', 'dept');
-
-    const userDeptId = await getUserDepartmentId(
-      this.candidateRepo.manager,
-      user,
-    );
+    const userDeptId = await this.getCachedUserDepartmentId(user);
 
     if (!canReadDept || !userDeptId) {
       throw new ForbiddenException(
@@ -197,144 +405,5 @@ export class CandidatesService {
         'Ứng viên này chưa ứng tuyển vào vị trí nào thuộc phòng ban của bạn phụ trách.',
       );
     }
-  }
-
-  // ========================================================
-  // 3. DEDUPLICATION & IDENTITY ENRICHMENT
-  // ========================================================
-  /**
-   * Gọi thông thường (ngoài transaction độc lập)
-   */
-  async findOrCreateProfile(
-    data: CandidateIdentityDto,
-  ): Promise<CandidateProfile> {
-    const normalizedEmail = data.email.trim().toLowerCase();
-    const normalizedPhone = data.phoneNumber.trim().replace(/\s+/g, '');
-
-    // 1. Tìm kiếm tuyệt đối theo Email trước (Primary Anchor)
-    let candidate = await this.candidateRepo
-      .createQueryBuilder('c')
-      .where('LOWER(c.email) = :email', { email: normalizedEmail })
-      .getOne();
-
-    // 2. Nếu không trùng Email, CHỈ đối chiếu Phone khi có SĐT thực tế (> 8 chữ số)
-    if (!candidate && normalizedPhone && normalizedPhone.length >= 9) {
-      candidate = await this.candidateRepo
-        .createQueryBuilder('c')
-        .where('c.phoneNumber = :phone', { phone: normalizedPhone })
-        .getOne();
-    }
-
-    if (candidate) {
-      // Deduplication Enrichment: Cập nhật các liên kết mới nếu hồ sơ cũ chưa có
-      let hasUpdate = false;
-
-      // Cập nhật SĐT nếu hồ sơ cũ chưa có mà lần này ứng viên mới cung cấp
-      if (!candidate.phoneNumber && normalizedPhone) {
-        candidate.phoneNumber = normalizedPhone;
-        hasUpdate = true;
-      }
-
-      if (!candidate.linkedInUrl && data.linkedInUrl) {
-        candidate.linkedInUrl = data.linkedInUrl;
-        hasUpdate = true;
-      }
-      if (!candidate.portfolioUrl && data.portfolioUrl) {
-        candidate.portfolioUrl = data.portfolioUrl;
-        hasUpdate = true;
-      }
-      if (candidate.fullName !== data.fullName) {
-        candidate.fullName = data.fullName;
-        hasUpdate = true;
-      }
-
-      if (hasUpdate) {
-        candidate = await this.candidateRepo.save(candidate);
-        this.logger.log(
-          `[Deduplication] Đã hợp nhất và cập nhật ứng viên: ${candidate.id}`,
-        );
-      }
-
-      return candidate;
-    }
-
-    // Tạo hồ sơ danh tính toàn cục mới
-    const newCandidate = this.candidateRepo.create({
-      fullName: data.fullName.trim(),
-      email: normalizedEmail,
-      phoneNumber: normalizedPhone,
-      linkedInUrl: data.linkedInUrl ?? null,
-      portfolioUrl: data.portfolioUrl ?? null,
-    });
-
-    return this.candidateRepo.save(newCandidate);
-  }
-
-  /**
-   * Gọi bên trong Transaction của TypeORM thông qua EntityManager
-   */
-  async findOrCreateProfileWithManager(
-    manager: EntityManager,
-    data: CandidateIdentityDto,
-  ): Promise<CandidateProfile> {
-    const repo = manager.getRepository(CandidateProfile);
-    const normalizedEmail = data.email.trim().toLowerCase();
-    const normalizedPhone = data.phoneNumber.trim().replace(/\s+/g, '');
-
-    // 1. Tìm kiếm tuyệt đối theo Email trước (Primary Anchor)
-    let candidate = await repo
-      .createQueryBuilder('c')
-      .where('LOWER(c.email) = :email', { email: normalizedEmail })
-      .getOne();
-
-    // 2. Nếu không trùng Email, đối chiếu Phone khi có SĐT thực tế (>= 9 chữ số)
-    if (!candidate && normalizedPhone && normalizedPhone.length >= 9) {
-      candidate = await repo
-        .createQueryBuilder('c')
-        .where('c.phoneNumber = :phone', { phone: normalizedPhone })
-        .getOne();
-    }
-
-    if (candidate) {
-      let hasUpdate = false;
-
-      // Cập nhật thông tin mới nếu hồ sơ cũ chưa có
-      if (!candidate.phoneNumber && normalizedPhone) {
-        candidate.phoneNumber = normalizedPhone;
-        hasUpdate = true;
-      }
-      if (!candidate.linkedInUrl && data.linkedInUrl) {
-        candidate.linkedInUrl = data.linkedInUrl;
-        hasUpdate = true;
-      }
-      if (!candidate.portfolioUrl && data.portfolioUrl) {
-        candidate.portfolioUrl = data.portfolioUrl;
-        hasUpdate = true;
-      }
-      if (candidate.fullName !== data.fullName) {
-        candidate.fullName = data.fullName;
-        hasUpdate = true;
-      }
-
-      if (hasUpdate) {
-        candidate = await repo.save(candidate);
-        this.logger.log(
-          `[Deduplication] Đã hợp nhất và cập nhật ứng viên: ${candidate.id}`,
-        );
-      }
-
-      return candidate;
-    }
-
-    // 3. Khởi tạo và lưu hồ sơ ứng viên mới trong Transaction
-    const newCandidate = repo.create({
-      fullName: data.fullName.trim(),
-      email: normalizedEmail,
-      phoneNumber: normalizedPhone,
-      linkedInUrl: data.linkedInUrl ?? null,
-      portfolioUrl: data.portfolioUrl ?? null,
-    });
-
-    return repo.save(newCandidate);
   }
 }

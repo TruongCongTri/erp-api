@@ -7,7 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, SelectQueryBuilder } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -26,12 +26,7 @@ import {
   ApplicationPhase,
   JobPostStatus,
 } from './enums/ats.enum';
-// import { AiScoreResult } from './cv-screening.types';
-import {
-  CandidatePromotedFromPoolEvent,
-  // CandidateScreeningCompletedEvent,
-  CandidateShortlistedEvent,
-} from './cv-screening.events';
+import { CandidateShortlistedEvent } from './cv-screening.events';
 import { ApplicationSubmission } from './entities/application-submission.entity';
 import {
   hasPermission,
@@ -45,6 +40,11 @@ import {
 } from './ats-domain.events';
 import { CV_RETENTION_DAYS, ATS_CV_SCREENING_QUEUE } from './ats.constants';
 import { ScreeningJobPayload } from './cv-screening.types';
+import { CacheService } from 'src/common/cache/cache.service';
+import {
+  ApplicationPromotedEvent,
+  ApplicationScreeningCompletedEvent,
+} from './job-applications.events';
 
 export interface CvScoreResult {
   /** null = AI không chấm được (tier N/A). Không bao giờ lưu 0 làm giá trị mặc định. */
@@ -56,29 +56,39 @@ export interface CvScoreResult {
 @Injectable()
 export class JobApplicationsService {
   private readonly logger = new Logger(JobApplicationsService.name);
+  private readonly PIPELINE_STATS_CACHE = 'ats:pipeline:stats';
 
   constructor(
     @InjectRepository(JobApplication)
     private readonly applicationRepo: Repository<JobApplication>,
     @InjectRepository(JobPost)
     private readonly jobPostRepo: Repository<JobPost>,
-    private readonly eventEmitter: EventEmitter2,
     @InjectRepository(ApplicationSubmission)
     private readonly submissionRepo: Repository<ApplicationSubmission>,
-    private readonly s3StorageService: S3StorageService,
     @InjectQueue(ATS_CV_SCREENING_QUEUE)
     private readonly screeningQueue: Queue<ScreeningJobPayload>,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly s3StorageService: S3StorageService,
+    private readonly cacheService: CacheService,
   ) {}
 
   // ========================================================
-  // 1. DEDUPLICATED FIND OR CREATE APPLICATION RECORD
+  // 1. TÌM HOẶC TẠO APPLICATION (ĐỒNG BỘ UNIQUE B-TREE INDEX)
   // ========================================================
   async findOrCreateApplication(
     candidateId: string,
     jobPostId: string,
   ): Promise<{ application: JobApplication; isNew: boolean }> {
-    // 1. Kiểm tra tính hợp lệ và thời hạn nhận hồ sơ của Job Post
-    const jobPost = await this.jobPostRepo.findOneBy({ id: jobPostId });
+    // Tiêu chí 3: Chỉ select cột cần thiết để kiểm tra hạn nộp
+    const jobPost = await this.jobPostRepo.findOne({
+      where: { id: jobPostId },
+      select: {
+        id: true,
+        status: true,
+        applicationDeadline: true,
+        publicTitle: true,
+      },
+    });
     if (!jobPost) {
       throw new NotFoundException(`Tin tuyển dụng ${jobPostId} không tồn tại.`);
     }
@@ -92,30 +102,22 @@ export class JobApplicationsService {
       );
     }
 
-    const today = new Date().toISOString().split('T')[0];
-    const deadline = new Date(jobPost.applicationDeadline)
-      .toISOString()
-      .split('T')[0];
-    if (deadline < today) {
-      throw new BadRequestException('Tin tuyển dụng này đã quá hạn nộp hồ sơ.');
-    }
-
-    // 2. Tra cứu ứng tuyển hiện hữu (1 Candidate x 1 JobPost composite unique)
+    // Tra cứu qua Composite Index (candidateId, jobPostId)
     let application = await this.applicationRepo.findOne({
       where: { candidateId, jobPostId },
-      relations: {
-        candidate: true,
-        jobPost: true,
-        submissions: true,
+      select: {
+        id: true,
+        candidateId: true,
+        jobPostId: true,
+        status: true,
+        createdAt: true,
       },
     });
 
     if (application) {
-      // Đã nộp trước đó -> Không reset status tuyển dụng đang phỏng vấn
       return { application, isNew: false };
     }
 
-    // 3. Khởi tạo mới hồ sơ ứng tuyển với pha ban đầu là APPLIED
     application = this.applicationRepo.create({
       candidateId,
       jobPostId,
@@ -123,11 +125,80 @@ export class JobApplicationsService {
     });
 
     const saved = await this.applicationRepo.save(application);
+    await this.invalidatePipelineCache(jobPostId);
     return { application: saved, isNew: true };
   }
 
   // ========================================================
-  // 2. ADVANCE HIRING PIPELINE PHASE
+  // 2. ỨNG TUYỂN TỰ DO (TALENT POOL SPONTANEOUS APPLICATION)
+  // ========================================================
+  async findOrCreateSpontaneousApplication(
+    candidateId: string,
+    desiredJobTitle: string,
+    coverLetter?: string,
+  ): Promise<{ application: JobApplication; isNew: boolean }> {
+    // Tận dụng Partial Index (job_post_id IS NULL)
+    let application = await this.applicationRepo.findOne({
+      where: {
+        candidateId,
+        jobPostId: IsNull(),
+      },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (application) {
+      application.desiredJobTitle = desiredJobTitle;
+      if (coverLetter) {
+        application.internalHrNotes = `[Ứng tuyển tự do cập nhật]: ${coverLetter}`;
+      }
+      const saved = await this.applicationRepo.save(application);
+      return { application: saved, isNew: false };
+    }
+
+    application = this.applicationRepo.create({
+      candidateId,
+      jobPostId: null,
+      desiredJobTitle,
+      status: ApplicationPhase.SAVED_POOL,
+      internalHrNotes: `[Ứng tuyển tự do]: Vị trí mong muốn "${desiredJobTitle}". Đã đưa vào Talent Pool.`,
+    });
+
+    const saved = await this.applicationRepo.save(application);
+    return { application: saved, isNew: true };
+  }
+
+  // ========================================================
+  // 4. THỐNG KÊ NHANH PIPELINE THEO CÁC GIAI ĐOẠN (CACHE $O(1)$)
+  // ========================================================
+  async getPipelineStats(jobPostId: string): Promise<Record<string, number>> {
+    const cacheKey = `${this.PIPELINE_STATS_CACHE}:${jobPostId}`;
+    const cachedStats =
+      await this.cacheService.get<Record<string, number>>(cacheKey);
+    if (cachedStats) return cachedStats;
+
+    // Truy vấn tổng hợp theo nhóm Index B-Tree
+    const statsRaw: Array<{ status: string; count: string }> =
+      await this.applicationRepo
+        .createQueryBuilder('app')
+        .select('app.status', 'status')
+        .addSelect('COUNT(app.id)', 'count')
+        .where('app.jobPostId = :jobPostId', { jobPostId })
+        .groupBy('app.status')
+        .getRawMany();
+
+    const stats: Record<string, number> = {};
+    Object.values(ApplicationPhase).forEach((p) => (stats[p] = 0));
+    statsRaw.forEach((row) => {
+      stats[row.status] = parseInt(row.count, 10);
+    });
+
+    // Cache trong 2 phút
+    await this.cacheService.set(cacheKey, stats, 120);
+    return stats;
+  }
+
+  // ========================================================
+  // 5. CẬP NHẬT GIAI ĐOẠN TUYỂN DỤNG (PHASE TRANSITION)
   // ========================================================
   async updatePhase(
     id: string,
@@ -186,7 +257,7 @@ export class JobApplicationsService {
       new ApplicationPhaseChangedEvent(
         saved.id,
         saved.candidateId,
-        saved.jobPostId,
+        saved.jobPostId ?? '',
         oldPhase,
         dto.phase,
         user.id || user.sub || 'SYSTEM',
@@ -198,7 +269,7 @@ export class JobApplicationsService {
   }
 
   // ========================================================
-  // 3. PIPELINE QUERIES BY JOB POST (KANBAN BOARD & SCOPE)
+  // 3. DANH SÁCH PIPELINE KANBAN (TRIỆT TIÊU N+1 & LEAN SELECT)
   // ========================================================
   async findByJobPost(
     jobPostId: string,
@@ -208,15 +279,14 @@ export class JobApplicationsService {
     const { page = 1, limit = 50, phase, search } = query;
     const skip = (page - 1) * limit;
 
-    // Kiểm tra quyền xem ứng viên của Job Post này
     if (user) {
       const jobPost = await this.jobPostRepo.findOne({
         where: { id: jobPostId },
-        relations: {
-          recruitmentRequest: {
-            department: true,
-          },
+        select: {
+          id: true,
+          recruitmentRequestId: true,
         },
+        relations: { recruitmentRequest: { department: true } },
       });
 
       if (!jobPost) {
@@ -224,24 +294,43 @@ export class JobApplicationsService {
           `Tin tuyển dụng ${jobPostId} không tồn tại.`,
         );
       }
-
       await this.assertJobViewPermission(jobPost, user);
     }
 
-    const qb: SelectQueryBuilder<JobApplication> = this.applicationRepo
+    // Tiêu chí 2 & 3: JOIN cụ thể, chỉ select các trường cần hiển thị trên Kanban card
+    const qb = this.applicationRepo
       .createQueryBuilder('app')
-      .leftJoinAndSelect('app.candidate', 'candidate')
-      .leftJoinAndSelect('app.submissions', 'submissions')
+      .innerJoin('app.candidate', 'candidate')
+      .leftJoin('app.submissions', 'submissions')
+      .select([
+        'app.id',
+        'app.status',
+        'app.aiScore',
+        'app.aiTier',
+        'app.createdAt',
+        'app.updatedAt',
+        'candidate.id',
+        'candidate.fullName',
+        'candidate.email',
+        'candidate.phoneNumber',
+        'submissions.id',
+        'submissions.platformSource',
+        'submissions.cvUrl',
+        'submissions.cvFileKey',
+        'submissions.isCvPurged',
+        'submissions.createdAt',
+      ])
       .where('app.jobPostId = :jobPostId', { jobPostId });
 
     if (phase) {
       qb.andWhere('app.status = :phase', { phase });
     }
 
-    if (search) {
+    if (search?.trim()) {
+      const term = `%${search.trim().toLowerCase()}%`;
       qb.andWhere(
-        '(LOWER(candidate.fullName) LIKE LOWER(:search) OR LOWER(candidate.email) LIKE LOWER(:search) OR candidate.phoneNumber LIKE :search)',
-        { search: `%${search}%` },
+        '(LOWER(candidate.fullName) LIKE :term OR LOWER(candidate.email) LIKE :term OR candidate.phoneNumber LIKE :term)',
+        { term },
       );
     }
 
@@ -428,6 +517,17 @@ export class JobApplicationsService {
 
     // 5. Kích hoạt Domain Events với đúng thứ tự tham số
     const currentSubmissionId = targetSubmission?.id ?? submissionId ?? null;
+    this.eventEmitter.emit(
+      'ats.cv_screened',
+      new ApplicationScreeningCompletedEvent(
+        savedApp.id,
+        savedApp.candidateId,
+        savedApp.jobPostId,
+        savedApp.aiScore ?? null,
+        scoreResult.aiTier,
+        currentSubmissionId,
+      ),
+    );
 
     // 4. BẮN SỰ KIỆN THÔNG BÁO CHO HỆ THỐNG
     if (
@@ -445,7 +545,7 @@ export class JobApplicationsService {
         new CandidateShortlistedEvent(
           savedApp.id,
           savedApp.candidateId,
-          savedApp.jobPostId,
+          savedApp.jobPostId ?? '',
           savedApp.candidate?.fullName ?? 'Ứng viên',
           savedApp.candidate?.email ?? '',
           savedApp.jobPost?.publicTitle ?? 'Vị trí tuyển dụng',
@@ -460,7 +560,7 @@ export class JobApplicationsService {
         new CandidateScreeningRejectedEvent(
           savedApp.id,
           savedApp.candidateId,
-          savedApp.jobPostId,
+          savedApp.jobPostId ?? '',
           savedApp.candidate?.fullName ?? 'Ứng viên',
           scoreResult.aiScore,
           scoreResult.aiReasoning,
@@ -476,10 +576,10 @@ export class JobApplicationsService {
         new CandidatePooledEvent(
           savedApp.id,
           savedApp.candidateId,
-          savedApp.jobPostId,
+          savedApp.jobPostId ?? '',
           savedApp.candidate?.fullName ?? 'Ứng viên',
           savedApp.jobPost?.publicTitle ?? 'Vị trí tuyển dụng',
-          scoreResult.aiScore,
+          scoreResult.aiScore ?? 0,
           currentSubmissionId,
         ),
       );
@@ -546,7 +646,7 @@ export class JobApplicationsService {
         applicationId: saved.id,
         submissionId: targetSubmission.id,
         candidateId: saved.candidateId,
-        jobPostId: saved.jobPostId,
+        jobPostId: saved.jobPostId ?? '',
         cvFileKey: targetSubmission.cvFileKey,
         cvUrl: targetSubmission.cvUrl,
       },
@@ -613,14 +713,19 @@ export class JobApplicationsService {
 
     const saved = await this.applicationRepo.save(application);
 
+    if (saved.jobPostId) {
+      await this.invalidatePipelineCache(saved.jobPostId);
+    }
+
     this.eventEmitter.emit(
       'ats.candidate_promoted',
-      new CandidatePromotedFromPoolEvent(
+      new ApplicationPromotedEvent(
         saved.id,
         saved.candidateId,
         saved.jobPostId,
-        user.id || user.sub || 'SYSTEM',
-        note,
+        targetPhase, // Bổ sung tham số targetPhase (ApplicationPhase) vào đây
+        user.id || user.sub || 'SYSTEM', // Tham số thứ 5: promotedById
+        note, // Tham số thứ 6: note
       ),
     );
 
@@ -652,10 +757,9 @@ export class JobApplicationsService {
       );
     }
 
-    if (user) {
+    if (user && application.jobPost) {
       await this.assertJobViewPermission(application.jobPost, user);
     }
-
     // 2. Truy vấn toàn bộ lịch sử nộp CV của đợt ứng tuyển này
     return this.submissionRepo.find({
       where: { applicationId },
@@ -720,8 +824,11 @@ export class JobApplicationsService {
   }
 
   // ========================================================
-  // 7. PRIVATE HELPER RBAC ASSERTIONS
+  // PRIVATE HELPER & CACHE INVALIDATION
   // ========================================================
+  private async invalidatePipelineCache(jobPostId: string): Promise<void> {
+    await this.cacheService.del(`${this.PIPELINE_STATS_CACHE}:${jobPostId}`);
+  }
   private extractJobDepartmentId(jobPost?: JobPost | null): string | undefined {
     if (!jobPost) return undefined;
 

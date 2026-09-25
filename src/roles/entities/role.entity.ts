@@ -6,12 +6,19 @@ import {
   ManyToMany,
   JoinTable,
   OneToMany,
+  Index,
 } from 'typeorm';
 import { Permission } from 'src/permissions/entities/permission.entity';
 import { User } from 'src/users/entities/users.entity';
 import { AuditableEntity } from 'src/common/entities/auditable.entity';
 
 @Entity('roles')
+// 1. Composite Index phục vụ lọc vai trò đang hoạt động (kết hợp soft-delete)
+@Index('idx_roles_live_deleted', ['isLive', 'deletedAt'])
+// 2. Index phục vụ tìm kiếm theo tên và sắp xếp
+@Index('idx_roles_name', ['name'])
+// 3. Index phục vụ defaultSort: 'updatedAt' của API danh sách
+@Index('idx_roles_updated_at', ['updatedAt'])
 export class Role extends AuditableEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -22,16 +29,18 @@ export class Role extends AuditableEntity {
   @Column()
   name!: string; // e.g., 'Phó Tổng Giám đốc Khối Thi công'
 
-  @Column({ default: false })
+  @Column({ default: false, name: 'is_default' })
   isDefault!: boolean; // General Director, etc. cannot be deleted
 
   @Column({ default: false, name: 'is_live' })
   isLive!: boolean;
 
-  @ManyToMany(() => Permission, (permission: Permission) => permission.roles, {
-    cascade: true,
+  @ManyToMany(() => Permission, (permission: Permission) => permission.roles)
+  @JoinTable({
+    name: 'role_permissions',
+    joinColumn: { name: 'role_id', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'permission_id', referencedColumnName: 'id' },
   })
-  @JoinTable({ name: 'role_permissions' })
   permissions!: Permission[];
 
   @OneToMany(() => User, (user: User) => user.role)

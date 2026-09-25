@@ -67,15 +67,17 @@ export class PermissionsController {
 
   @Get()
   @RequirePermissions('it_system:read:any')
-  async findAll(
-    @Query() query: PermissionQueryDto,
-    @Query('refresh') refresh?: string,
-  ) {
-    // Prevent the 'refresh' key from leaking into the JSON.stringify cache key
-    if (query['refresh']) delete query['refresh'];
-
+  async findAll(@Query() query: PermissionQueryDto) {
+    // Tách param refresh bằng destructuring bất biến, tránh làm sai lệch cache key
+    const { refresh, ...cleanQuery } = query as PermissionQueryDto & {
+      refresh?: string;
+    };
     const forceRefresh = refresh === 'true';
-    const result = await this.permissionsService.findAll(query, forceRefresh);
+
+    const result = await this.permissionsService.findAll(
+      cleanQuery,
+      forceRefresh,
+    );
     return {
       data: result.data,
       meta: result.meta,

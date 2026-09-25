@@ -18,6 +18,8 @@ import { JobApplicationsController } from './job-applications.controller';
 import { CandidatesService } from './candidates.service';
 import { JobApplicationsService } from './job-applications.service';
 import { ApplicationSubmissionsService } from './application-submissions.service';
+import { CacheModule } from 'src/common/cache/cache.module';
+import { S3StorageService } from './s3-storage.service';
 
 @Module({
   imports: [
@@ -27,6 +29,7 @@ import { ApplicationSubmissionsService } from './application-submissions.service
       ApplicationSubmission,
       JobPost,
     ]),
+    CacheModule, // Cung cấp CacheService cho Dedup & Hot-Read Caching
     BullModule.registerQueue({
       name: ATS_CV_SCREENING_QUEUE,
     }),
@@ -36,12 +39,13 @@ import { ApplicationSubmissionsService } from './application-submissions.service
     CandidatesService,
     JobApplicationsService,
     ApplicationSubmissionsService,
+    S3StorageService,
   ],
   exports: [
     CandidatesService,
     JobApplicationsService,
     ApplicationSubmissionsService,
-    TypeOrmModule,
+    TypeOrmModule, // Cho phép các module con khác trong ats.module tái sử dụng Repository
   ],
 })
 export class CandidatesModule {}

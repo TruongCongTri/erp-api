@@ -1,18 +1,12 @@
 // src/users/users.service.ts
-import {
-  Repository,
-  In,
-  FindOptionsWhere,
-  Not,
-  IsNull,
-  Brackets,
-} from 'typeorm';
+import { Repository, In, Not, IsNull, Brackets } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import {
   Injectable,
   NotFoundException,
   BadRequestException,
   UnauthorizedException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -21,10 +15,7 @@ import { UserQueryDto } from './dto/user-query.dto';
 import { UserStatus } from './enums/user-status.enum';
 import { Role } from 'src/roles/entities/role.entity';
 import { Permission } from 'src/permissions/entities/permission.entity';
-import {
-  buildFindOptions,
-  buildPaginationMeta,
-} from 'src/common/utils/typeorm-query.util';
+import { buildPaginationMeta } from 'src/common/utils/typeorm-query.util';
 import { PaginationMetaDto } from 'src/common/dto/pagination.dto';
 import { CacheService } from 'src/common/cache/cache.service';
 import { Cacheable } from 'src/common/cache/decorators/cacheable.decorator';
@@ -37,9 +28,27 @@ import { EmployeeProfile } from 'src/employee-profiles/entities/employee-profile
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Department } from 'src/departments/entities/department.entity';
 
-export type UserListResponse = Omit<User, 'bonusPermissions'> & {
+export interface UserListResponse {
+  id: string;
+  fullName: string;
+  email: string;
+  avatarUrl?: string;
+  status: UserStatus;
+  createdAt: Date;
+  updatedAt: Date;
+  role?: { id: string; name: string } | null;
+  department?: { id: string; name: string; code: string } | null;
+  profile?: {
+    employeeCode: string;
+    jobTitle: string;
+    phoneNumber?: string;
+  } | null;
   bonusPermsCount: number;
-};
+}
+
+interface UserRawCount {
+  bonusPermsCount?: string | number;
+}
 
 @Injectable()
 export class UsersService {
@@ -52,7 +61,6 @@ export class UsersService {
     private readonly permissionRepository: Repository<Permission>,
     @InjectRepository(EmployeeProfile)
     private readonly profileRepository: Repository<EmployeeProfile>,
-
     @InjectRepository(Department)
     private readonly departmentRepository: Repository<Department>,
     private readonly eventEmitter: EventEmitter2,
@@ -68,13 +76,27 @@ export class UsersService {
     createData: CreateUserDto,
     adminUser: ActiveUserData,
   ): Promise<User> {
+    const emailExists = await this.userRepository.exists({
+      where: { email: createData.email.toLowerCase().trim() },
+    });
+    if (emailExists) {
+      throw new ConflictException(
+        MESSAGES.ERROR.ALREADY_EXISTS(
+          RESOURCES.USER.BASE,
+          'Email',
+          createData.email,
+        ),
+      );
+    }
     const user = this.userRepository.create({
       ...createData,
+      email: createData.email.toLowerCase().trim(),
       createdBy: adminUser.id,
       createdByName: adminUser.fullName,
       updatedBy: adminUser.id,
       updatedByName: adminUser.fullName,
     });
+
     user.passwordHash = await bcrypt.hash(
       createData.password || 'ChinhNam@2026',
       10,
@@ -92,51 +114,98 @@ export class UsersService {
     query: UserQueryDto,
     _bypassCache?: boolean,
   ): Promise<{ data: UserListResponse[]; meta: PaginationMetaDto }> {
-    const customFilters: FindOptionsWhere<User> = {};
-    if (query.status) customFilters.status = query.status;
-    if (query.roleId) customFilters.role = { id: query.roleId };
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.max(1, Number(query.limit) || 10);
+    const skip = (page - 1) * limit;
 
-    const findOptions = buildFindOptions<User>({
-      queryDto: query,
-      searchableColumns: ['fullName', 'email'],
-      sortableColumns: ['fullName', 'email', 'status', 'createdAt'],
-      defaultSort: 'createdAt',
-      customFilters,
-    });
+    // 1. TRIỆT TIÊU CARTESIAN PRODUCT:
+    // Dùng subquery đếm quyền thưởng trực tiếp, không join mảng M-N vào RAM
+    const qb = this.userRepository
+      .createQueryBuilder('user')
+      .leftJoin('user.role', 'role')
+      .leftJoin('user.department', 'dept')
+      .leftJoin('user.profile', 'profile')
+      .select([
+        'user.id',
+        'user.fullName',
+        'user.email',
+        'user.avatarUrl',
+        'user.status',
+        'user.createdAt',
+        'user.updatedAt',
+        'role.id',
+        'role.name',
+        'dept.id',
+        'dept.name',
+        'dept.code',
+        'profile.employeeCode',
+        'profile.jobTitle',
+        'profile.phoneNumber',
+      ])
+      .addSelect((subQuery) => {
+        return subQuery
+          .select('COUNT(ubp.permission_id)', 'bonusPermsCount')
+          .from('user_bonus_permissions', 'ubp')
+          .where('ubp.user_id = user.id');
+      }, 'bonusPermsCount');
 
-    findOptions.relations = {
-      role: true,
-      profile: true,
-      bonusPermissions: true,
-    };
+    if (query.status) {
+      qb.andWhere('user.status = :status', { status: query.status });
+    }
 
-    findOptions.select = {
-      id: true,
-      fullName: true,
-      email: true,
-      avatarUrl: true,
-      status: true,
-      createdAt: true,
-      createdBy: true,
-      updatedAt: true,
-      updatedBy: true,
-      deletedAt: true,
-      deletedBy: true,
-      role: { id: true, name: true },
-      profile: { employeeCode: true, jobTitle: true, phoneNumber: true },
-      bonusPermissions: { id: true },
-    };
+    if (query.roleId) {
+      qb.andWhere('user.role_id = :roleId', { roleId: query.roleId });
+    }
 
-    const repo: Repository<User> = this.userRepository;
-    const [items, total] = await repo.findAndCount(findOptions);
+    if (query.search?.trim()) {
+      qb.andWhere('(user.fullName ILIKE :search OR user.email ILIKE :search)', {
+        search: `%${query.search.trim()}%`,
+      });
+    }
 
-    const mappedItems: UserListResponse[] = items.map((user) => {
-      const { bonusPermissions, ...rest } = user;
-      return {
-        ...rest,
-        bonusPermsCount: bonusPermissions?.length || 0,
-      };
-    });
+    const sortField = query.sortBy || 'createdAt';
+    const sortOrder = query.sortOrder?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    qb.orderBy(`user.${sortField}`, sortOrder);
+
+    qb.skip(skip).take(limit);
+
+    const [rawEntities, total] = await Promise.all([
+      qb.getRawAndEntities<UserRawCount>(),
+      qb.getCount(),
+    ]);
+
+    const mappedItems: UserListResponse[] = rawEntities.entities.map(
+      (entity, index) => {
+        const raw = rawEntities.raw[index];
+        return {
+          id: entity.id,
+          fullName: entity.fullName,
+          email: entity.email,
+          avatarUrl: entity.avatarUrl,
+          status: entity.status,
+          createdAt: entity.createdAt,
+          updatedAt: entity.updatedAt,
+          role: entity.role
+            ? { id: entity.role.id, name: entity.role.name }
+            : null,
+          department: entity.department
+            ? {
+                id: entity.department.id,
+                name: entity.department.name,
+                code: entity.department.code,
+              }
+            : null,
+          profile: entity.profile
+            ? {
+                employeeCode: entity.profile.employeeCode,
+                jobTitle: entity.profile.jobTitle,
+                phoneNumber: entity.profile.phoneNumber,
+              }
+            : null,
+          bonusPermsCount: Number(raw?.bonusPermsCount ?? 0),
+        };
+      },
+    );
 
     return {
       data: mappedItems,
@@ -150,14 +219,24 @@ export class UsersService {
     ttlSeconds: 86400,
   })
   async findOne(id: string, _bypassCache?: boolean): Promise<User> {
+    // 2. Selective Projection: Không load avatar history hay toàn bộ quan hệ nặng
     const user = await this.userRepository.findOne({
       where: { id },
-      relations: {
-        role: true,
-        bonusPermissions: true,
-        profile: { identityCard: true },
-        avatars: true,
+      select: {
+        id: true,
+        email: true,
+        fullName: true,
+        avatarUrl: true,
+        status: true,
+        organizationId: true,
+        departmentId: true,
+        createdAt: true,
+        updatedAt: true,
+        role: { id: true, name: true, slug: true },
+        department: { id: true, name: true, code: true },
+        profile: { employeeCode: true, jobTitle: true, phoneNumber: true },
       },
+      relations: { role: true, department: true, profile: true },
     });
     if (!user)
       throw new NotFoundException(
@@ -185,6 +264,7 @@ export class UsersService {
         email: true,
         avatarUrl: true,
         status: true,
+        department: { id: true, name: true, code: true },
         profile: {
           employeeCode: true,
           jobTitle: true,
@@ -192,7 +272,7 @@ export class UsersService {
         },
         role: { id: true, name: true },
       },
-      relations: { profile: true, role: true },
+      relations: { profile: true, role: true, department: true },
     });
 
     if (!user)
@@ -211,8 +291,49 @@ export class UsersService {
   async getFullProfile(id: string, _bypassCache?: boolean) {
     const user = await this.userRepository.findOne({
       where: { id },
-      // Deep fetch the identity card relation so the FE knows it exists
-      relations: { profile: { identityCard: true }, role: true, avatars: true },
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        avatarUrl: true,
+        status: true,
+        organizationId: true,
+        departmentId: true,
+        createdAt: true,
+        role: { id: true, name: true, slug: true },
+        department: { id: true, name: true, code: true },
+        profile: {
+          id: true,
+          employeeCode: true,
+          jobTitle: true,
+          phoneNumber: true,
+          gender: true,
+          dateOfBirth: true,
+          joinDate: true,
+          permanentAddress: true,
+          temporaryAddress: true,
+          identityCard: {
+            id: true,
+            cccdLastFour: true, // Khớp với entity CitizenIdentityCard
+            fullName: true,
+            dateOfExpiry: true,
+            status: true,
+          },
+          financial: {
+            id: true,
+            taxCodeEncrypted: true, // Khớp với entity EmployeeFinancial
+            socialInsuranceNumberEncrypted: true,
+          },
+        },
+      },
+      relations: {
+        profile: {
+          identityCard: true,
+          financial: true,
+        },
+        role: true,
+        department: true,
+      },
     });
 
     if (!user)
@@ -220,19 +341,19 @@ export class UsersService {
         MESSAGES.ERROR.NOT_FOUND(RESOURCES.USER.BASE),
       );
 
-    // 🛡️ HARD MASK SENSITIVE DATA BEFORE RETURNING
+    // Định dạng dữ liệu hiển thị an toàn (Masked View) cho Frontend
     if (user.profile) {
-      if (user.profile.taxCode) user.profile.taxCode = '***';
-      if (user.profile.socialInsuranceNumber)
-        user.profile.socialInsuranceNumber = '***';
-
-      if (user.profile.identityCard) {
-        if (user.profile.identityCard.cccdNumber)
-          user.profile.identityCard.cccdNumber = '***';
-        if (user.profile.identityCard.personalIdentification)
-          user.profile.identityCard.personalIdentification = '***';
-        // You can choose to leave dates/locations visible or mask them as well
+      if (user.profile.financial) {
+        // Che mờ chuỗi ciphertext trước khi gửi về client
+        if (user.profile.financial.taxCodeEncrypted) {
+          user.profile.financial.taxCodeEncrypted = '***';
+        }
+        if (user.profile.financial.socialInsuranceNumberEncrypted) {
+          user.profile.financial.socialInsuranceNumberEncrypted = '***';
+        }
       }
+
+      // cccdLastFour (ví dụ: "1234") được dùng trực tiếp để hiển thị: "***-***-1234"
     }
 
     return user;
@@ -251,7 +372,7 @@ export class UsersService {
       },
     });
 
-    if (!admin || !admin.passwordHash) {
+    if (!admin?.passwordHash) {
       throw new UnauthorizedException(MESSAGES.ERROR.AUTH.INVALID_CREDENTIALS);
     }
 
@@ -269,22 +390,58 @@ export class UsersService {
   ) {
     await this.verifyRequesterPassword(requester.id, passwordDto.password);
 
+    // const targetUser = await this.userRepository.findOne({
+    //   where: { id: targetUserId },
+    //   relations: { profile: { identityCard: true } },
+    // });
+
+    // if (
+    //   !targetUser ||
+    //   !targetUser.profile ||
+    //   !targetUser.profile.identityCard
+    // ) {
+    //   throw new NotFoundException(
+    //     'Dữ liệu CCCD không tồn tại cho nhân viên này.',
+    //   );
+    // }
+
+    // // Optional: await this.auditService.logSensitiveAccess(requester.id, targetUserId, 'IDENTITY');
+
+    // return targetUser.profile.identityCard;
     const targetUser = await this.userRepository.findOne({
       where: { id: targetUserId },
+      select: {
+        id: true,
+        profile: {
+          id: true,
+          identityCard: {
+            id: true,
+            cccdNumberEncrypted: true, // Khớp với schema mới
+            cccdLastFour: true,
+            personalIdentificationEncrypted: true, // Khớp với schema mới
+            fullName: true,
+            dateOfBirth: true,
+            gender: true,
+            nationality: true,
+            ethnicity: true,
+            religion: true,
+            placeOfOrigin: true,
+            placeOfResidence: true,
+            temporaryAddress: true,
+            dateOfIssue: true,
+            dateOfExpiry: true,
+            placeOfIssue: true,
+            status: true,
+          },
+        },
+      },
       relations: { profile: { identityCard: true } },
     });
-
-    if (
-      !targetUser ||
-      !targetUser.profile ||
-      !targetUser.profile.identityCard
-    ) {
+    if (!targetUser?.profile?.identityCard) {
       throw new NotFoundException(
         'Dữ liệu CCCD không tồn tại cho nhân viên này.',
       );
     }
-
-    // Optional: await this.auditService.logSensitiveAccess(requester.id, targetUserId, 'IDENTITY');
 
     return targetUser.profile.identityCard;
   }
@@ -297,20 +454,62 @@ export class UsersService {
   ) {
     await this.verifyRequesterPassword(requester.id, passwordDto.password);
 
+    // const targetUser = await this.userRepository.findOne({
+    //   where: { id: targetUserId },
+    //   relations: { profile: true },
+    // });
+
+    // if (!targetUser || !targetUser.profile) {
+    //   throw new NotFoundException('Hồ sơ nhân viên không tồn tại.');
+    // }
     const targetUser = await this.userRepository.findOne({
       where: { id: targetUserId },
-      relations: { profile: true },
+      select: {
+        id: true,
+        profile: {
+          id: true,
+          employeeCode: true,
+          financial: {
+            id: true,
+            profileId: true,
+            taxCodeEncrypted: true, // Khớp với entity EmployeeFinancial
+            socialInsuranceNumberEncrypted: true, // Khớp với entity EmployeeFinancial
+          },
+          salaryHistories: {
+            id: true,
+            profileId: true,
+            baseSalaryEncrypted: true, // Khớp với entity EmployeeSalaryHistory
+            extraSalaryEncrypted: true,
+            currency: true,
+            effectiveDate: true,
+            note: true,
+            isCurrent: true,
+          },
+        },
+      },
+      relations: {
+        profile: {
+          financial: true,
+          salaryHistories: true,
+        },
+      },
     });
 
-    if (!targetUser || !targetUser.profile) {
+    if (!targetUser?.profile) {
       throw new NotFoundException('Hồ sơ nhân viên không tồn tại.');
     }
 
-    // Optional: await this.auditService.logSensitiveAccess(requester.id, targetUserId, 'FINANCIAL');
-
+    // Sắp xếp lịch sử lương giảm dần theo ngày hiệu lực
+    const sortedSalaryHistories = (
+      targetUser.profile.salaryHistories || []
+    ).sort(
+      (a, b) =>
+        new Date(b.effectiveDate).getTime() -
+        new Date(a.effectiveDate).getTime(),
+    );
     return {
-      taxCode: targetUser.profile.taxCode || null,
-      socialInsuranceNumber: targetUser.profile.socialInsuranceNumber || null,
+      financial: targetUser.profile.financial ?? null,
+      salaryHistories: sortedSalaryHistories,
     };
   }
 
@@ -333,46 +532,82 @@ export class UsersService {
     dto: UpdateUserDto,
     adminUser: ActiveUserData,
   ): Promise<User> {
-    const user = await this.findOne(id);
-    Object.assign(user, dto);
-    user.updatedBy = adminUser.id;
-    user.updatedByName = adminUser.fullName;
+    // const user = await this.findOne(id);
+    // Object.assign(user, dto);
+    // user.updatedBy = adminUser.id;
+    // user.updatedByName = adminUser.fullName;
 
-    const savedUser = await this.userRepository.save(user);
+    // const savedUser = await this.userRepository.save(user);
 
-    if (this.cacheService.delPattern) {
-      await this.cacheService.delPattern('users:list:*');
+    // if (this.cacheService.delPattern) {
+    //   await this.cacheService.delPattern('users:list:*');
+    // }
+    // return savedUser;
+    const userExists = await this.userRepository.exists({ where: { id } });
+    if (!userExists) {
+      throw new NotFoundException(
+        MESSAGES.ERROR.NOT_FOUND(RESOURCES.USER.BASE, id),
+      );
     }
-    return savedUser;
+
+    // 3. Update có chủ đích, không load full tree entity vào RAM
+    await this.userRepository.update(id, {
+      ...dto,
+      updatedBy: adminUser.id,
+      updatedByName: adminUser.fullName,
+    });
+
+    return this.findOne(id);
   }
 
   @CacheClear({
     key: (id: unknown) => [
-      `user:${id as string}`,
-      `user:${id as string}:perms`,
-      `user:${id as string}:quick-profile`,
-      `user:${id as string}:full-profile`,
+      `user:${id as string}*`,
       'users:available',
       'users:list:*',
+      'users:recycle-bin',
     ],
     isPattern: true,
   })
   async remove(id: string, adminUser: ActiveUserData): Promise<void> {
-    const user = await this.findOne(id);
+    // const user = await this.findOne(id);
 
-    user.status = UserStatus.RESIGNED;
-    user.role = null as unknown as Role;
-    user.bonusPermissions = [];
-    user.deletedBy = adminUser.id;
-    user.deletedByName = adminUser.fullName;
+    // user.status = UserStatus.RESIGNED;
+    // user.role = null as unknown as Role;
+    // user.bonusPermissions = [];
+    // user.deletedBy = adminUser.id;
+    // user.deletedByName = adminUser.fullName;
 
-    await this.userRepository.save(user);
-    await this.userRepository.softRemove(user);
+    // await this.userRepository.save(user);
+    // await this.userRepository.softRemove(user);
 
-    if (this.cacheService.delPattern) {
-      await this.cacheService.delPattern('users:list:*');
-      await this.cacheService.delPattern(`user:${id}:*`);
+    // if (this.cacheService.delPattern) {
+    //   await this.cacheService.delPattern('users:list:*');
+    //   await this.cacheService.delPattern(`user:${id}:*`);
+    // }
+    const userExists = await this.userRepository.exists({ where: { id } });
+    if (!userExists) {
+      throw new NotFoundException(
+        MESSAGES.ERROR.NOT_FOUND(RESOURCES.USER.BASE, id),
+      );
     }
+
+    // 4. Update trạng thái và soft-delete trong một chu kỳ
+    await this.userRepository.update(id, {
+      status: UserStatus.RESIGNED,
+      role: null,
+      deletedBy: adminUser.id,
+      deletedByName: adminUser.fullName,
+    });
+
+    // Tách junction table bonus permissions an toàn
+    await this.userRepository
+      .createQueryBuilder()
+      .relation(User, 'bonusPermissions')
+      .of(id)
+      .set([]);
+
+    await this.userRepository.softDelete(id);
   }
 
   // ==========================================
@@ -398,6 +633,20 @@ export class UsersService {
     ttlSeconds: 86400,
   })
   async getUserAccessDetails(id: string, _bypassCache?: boolean) {
+    // const user = await this.userRepository.findOne({
+    //   where: { id },
+    //   select: {
+    //     id: true,
+    //     fullName: true,
+    //     email: true,
+    //     avatarUrl: true,
+    //     status: true,
+    //   },
+    //   relations: {
+    //     role: { permissions: true },
+    //     bonusPermissions: true,
+    //   },
+    // });
     const user = await this.userRepository.findOne({
       where: { id },
       select: {
@@ -406,9 +655,11 @@ export class UsersService {
         email: true,
         avatarUrl: true,
         status: true,
+        role: { id: true, name: true, slug: true },
+        bonusPermissions: { id: true, name: true, slug: true },
       },
       relations: {
-        role: { permissions: true },
+        role: true,
         bonusPermissions: true,
       },
     });
@@ -430,13 +681,18 @@ export class UsersService {
     };
   }
 
+  // @CacheClear({
+  //   key: (userId: unknown) => [
+  //     `user:${userId as string}`,
+  //     `user:${userId as string}:perms`,
+  //     `user:${userId as string}:access-details`,
+  //     'users:list:*',
+  //   ],
+  //   isPattern: true,
+  // })
+
   @CacheClear({
-    key: (userId: unknown) => [
-      `user:${userId as string}`,
-      `user:${userId as string}:perms`,
-      `user:${userId as string}:access-details`,
-      'users:list:*',
-    ],
+    key: (userId: unknown) => [`user:${userId as string}*`, 'users:list:*'],
     isPattern: true,
   })
   async updateUserAccess(
@@ -445,44 +701,61 @@ export class UsersService {
     bonusPermissionIds: string[],
     adminUser: ActiveUserData,
   ): Promise<User> {
-    const user = await this.findOne(userId);
-
-    if (roleId) {
-      const role = await this.roleRepository.findOne({
-        where: { id: roleId, isLive: true },
-      });
-      if (!role) throw new BadRequestException(MESSAGES.ERROR.ROLE.UNAVAILABLE);
-      user.role = role;
+    // const user = await this.findOne(userId);
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: { id: true },
+    });
+    if (!user) {
+      throw new NotFoundException(
+        MESSAGES.ERROR.NOT_FOUND(RESOURCES.USER.BASE, userId),
+      );
     }
 
-    if (bonusPermissionIds && bonusPermissionIds.length > 0) {
-      user.bonusPermissions = await this.permissionRepository.find({
-        where: { id: In(bonusPermissionIds), isLive: true },
+    if (roleId) {
+      const roleExists = await this.roleRepository.exists({
+        where: { id: roleId, isLive: true },
       });
+      if (!roleExists)
+        throw new BadRequestException(MESSAGES.ERROR.ROLE.UNAVAILABLE);
+      user.role = { id: roleId } as Role;
+    }
+
+    if (bonusPermissionIds?.length) {
+      user.bonusPermissions = bonusPermissionIds.map(
+        (id) => ({ id }) as Permission,
+      );
     } else {
       user.bonusPermissions = [];
     }
 
     user.updatedBy = adminUser.id;
     user.updatedByName = adminUser.fullName;
-    const savedUser = await this.userRepository.save(user);
+    // const savedUser = await this.userRepository.save(user);
 
-    if (this.cacheService.delPattern) {
-      await this.cacheService.delPattern('users:list:*');
-      await this.cacheService.del(`user:${userId}:access-details`);
-      await this.cacheService.del(`user:${userId}:perms`);
-    }
+    // if (this.cacheService.delPattern) {
+    //   await this.cacheService.delPattern('users:list:*');
+    //   await this.cacheService.del(`user:${userId}:access-details`);
+    //   await this.cacheService.del(`user:${userId}:perms`);
+    // }
 
-    return savedUser;
+    return this.userRepository.save(user);
   }
 
   @Cacheable({
     key: 'users:recycle-bin',
     forceRefresh: (bypassCache: unknown) => bypassCache === true,
-    ttlSeconds: 3600,
+    ttlSeconds: 1800,
   })
   async findRecycleBin(_bypassCache?: boolean): Promise<User[]> {
     return this.userRepository.find({
+      select: {
+        id: true,
+        fullName: true,
+        email: true,
+        deletedAt: true,
+        deletedByName: true,
+      },
       where: { deletedAt: Not(IsNull()) },
       withDeleted: true,
       order: { deletedAt: 'DESC' },
@@ -502,6 +775,7 @@ export class UsersService {
     const user = await this.userRepository.findOne({
       where: { id },
       withDeleted: true,
+      select: { id: true, deletedAt: true },
     });
 
     if (!user)
@@ -511,20 +785,32 @@ export class UsersService {
     if (!user.deletedAt)
       throw new BadRequestException('User is not in the recycle bin.');
 
+    // user.deletedAt = null;
+    // user.deletedBy = null;
+    // user.deletedByName = null;
+    // user.updatedBy = adminUser.id;
+    // user.updatedByName = adminUser.fullName;
+    // user.status = UserStatus.ACTIVE;
+
+    // const savedUser = await this.userRepository.save(user);
+
+    // if (this.cacheService.delPattern) {
+    //   await this.cacheService.delPattern('users:list:*');
+    // }
+
+    // return savedUser;
+    await this.userRepository.restore(id);
+    await this.userRepository.update(id, {
+      status: UserStatus.ACTIVE,
+      deletedBy: null,
+      deletedByName: null,
+      updatedBy: adminUser.id,
+      updatedByName: adminUser.fullName,
+    });
+
     user.deletedAt = null;
-    user.deletedBy = null;
-    user.deletedByName = null;
-    user.updatedBy = adminUser.id;
-    user.updatedByName = adminUser.fullName;
     user.status = UserStatus.ACTIVE;
-
-    const savedUser = await this.userRepository.save(user);
-
-    if (this.cacheService.delPattern) {
-      await this.cacheService.delPattern('users:list:*');
-    }
-
-    return savedUser;
+    return user;
   }
 
   // ==========================================
@@ -543,6 +829,7 @@ export class UsersService {
   async submitProfileClaim(userId: string, dto: { employeeCode: string }) {
     const user = await this.userRepository.findOne({
       where: { id: userId },
+      select: { id: true, fullName: true, profile: { id: true } },
       relations: { profile: true },
     });
 
@@ -555,6 +842,7 @@ export class UsersService {
     // Find the requested profile
     const profile = await this.profileRepository.findOne({
       where: { employeeCode: dto.employeeCode },
+      select: { id: true, isLive: true, user: { id: true } },
       relations: { user: true },
     });
 
@@ -583,7 +871,7 @@ export class UsersService {
       employeeCode: dto.employeeCode,
     });
 
-    console.log(`User ${user.id} request to claim profile ${dto.employeeCode}`);
+    // console.log(`User ${user.id} request to claim profile ${dto.employeeCode}`);
 
     return {
       message:
@@ -600,21 +888,54 @@ export class UsersService {
     ttlSeconds: 3600,
   })
   async getPendingClaims(query: UserQueryDto, _bypassCache?: boolean) {
-    const page = query.page || 1;
-    const limit = query.limit || 10;
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.max(1, Number(query.limit) || 10);
 
+    // const queryBuilder = this.userRepository
+    //   .createQueryBuilder('user')
+    //   .leftJoinAndSelect('user.role', 'role')
+    //   .innerJoinAndSelect('user.profile', 'profile') // MUST have a profile linked
+    //   .leftJoinAndSelect('profile.designatedRole', 'designatedRole')
+    //   .where('user.status = :status', { status: UserStatus.ACTIVE })
+    //   // Allow GUEST role OR Null role
+    //   .andWhere(
+    //     new Brackets((qb) => {
+    //       qb.where('role.slug = :roleSlug', { roleSlug: 'GUEST' })
+    //         // 👇 FIX: TypeORM safe way to check if a left-joined relation is null
+    //         .orWhere('role.id IS NULL');
+    //     }),
+    //   )
+    //   .orderBy('user.updatedAt', 'DESC')
+    //   .skip((page - 1) * limit)
+    //   .take(limit);
+    // 5. Tối ưu Payload: Chỉ select các cột phục vụ xét duyệt, không lộ dữ liệu nhạy cảm
     const queryBuilder = this.userRepository
       .createQueryBuilder('user')
-      .leftJoinAndSelect('user.role', 'role')
-      .innerJoinAndSelect('user.profile', 'profile') // MUST have a profile linked
-      .leftJoinAndSelect('profile.designatedRole', 'designatedRole')
+      .leftJoin('user.role', 'role')
+      .innerJoin('user.profile', 'profile')
+      .leftJoin('profile.designatedRole', 'designatedRole')
+      .select([
+        'user.id',
+        'user.fullName',
+        'user.email',
+        'user.avatarUrl',
+        'user.updatedAt',
+        'role.id',
+        'role.name',
+        'role.slug',
+        'profile.id',
+        'profile.employeeCode',
+        'profile.jobTitle',
+        'designatedRole.id',
+        'designatedRole.name',
+        'designatedRole.slug',
+      ])
       .where('user.status = :status', { status: UserStatus.ACTIVE })
-      // Allow GUEST role OR Null role
       .andWhere(
         new Brackets((qb) => {
-          qb.where('role.slug = :roleSlug', { roleSlug: 'GUEST' })
-            // 👇 FIX: TypeORM safe way to check if a left-joined relation is null
-            .orWhere('role.id IS NULL');
+          qb.where('role.slug = :roleSlug', { roleSlug: 'GUEST' }).orWhere(
+            'role.id IS NULL',
+          );
         }),
       )
       .orderBy('user.updatedAt', 'DESC')
@@ -623,7 +944,7 @@ export class UsersService {
 
     const [items, total] = await queryBuilder.getManyAndCount();
 
-    console.log(`Found ${total} pending profile claims`);
+    // console.log(`Found ${total} pending profile claims`);
 
     return {
       data: items,
@@ -659,7 +980,7 @@ export class UsersService {
       },
     });
 
-    console.log(`Approving userID ${targetUserId}`);
+    // console.log(`Approving userID ${targetUserId}`);
     const isGuestOrNoRole = !user?.role || user.role.slug === 'GUEST';
 
     if (!user || !user.profile || !isGuestOrNoRole) {
@@ -744,12 +1065,12 @@ export class UsersService {
     const claimedCode = user.profile.employeeCode;
     const savedUser = await this.userRepository.save(user);
 
-    // Safe explicit cache clear
-    if (this.cacheService.delPattern) {
-      await this.cacheService.delPattern('users:list:*');
-      await this.cacheService.delPattern('users:claims:pending:*');
-      await this.cacheService.delPattern(`user:${targetUserId}*`);
-    }
+    // // Safe explicit cache clear
+    // if (this.cacheService.delPattern) {
+    //   await this.cacheService.delPattern('users:list:*');
+    //   await this.cacheService.delPattern('users:claims:pending:*');
+    //   await this.cacheService.delPattern(`user:${targetUserId}*`);
+    // }
 
     // Fire Event: Tell the Worker they were approved
     this.eventEmitter.emit('profile.claim.approved', {
@@ -775,13 +1096,12 @@ export class UsersService {
   async rejectProfileClaim(targetUserId: string, adminUser: ActiveUserData) {
     const user = await this.userRepository.findOne({
       where: { id: targetUserId },
-      relations: { profile: true, role: true }, // 👈 Added role relation
+      relations: { profile: true, role: true },
     });
 
     // Use the new logical definition for "Pending"
     const isGuestOrNoRole = !user?.role || user.role.slug === 'GUEST';
-
-    if (!user || !user.profile || !isGuestOrNoRole) {
+    if (!user?.profile || !isGuestOrNoRole) {
       throw new BadRequestException(
         'Không tìm thấy yêu cầu cần phê duyệt hợp lệ.',
       );
@@ -799,11 +1119,11 @@ export class UsersService {
 
     await this.userRepository.save(user);
 
-    if (this.cacheService.delPattern) {
-      await this.cacheService.delPattern('users:list:*');
-      await this.cacheService.delPattern('users:claims:pending:*');
-      await this.cacheService.delPattern(`user:${targetUserId}*`);
-    }
+    // if (this.cacheService.delPattern) {
+    //   await this.cacheService.delPattern('users:list:*');
+    //   await this.cacheService.delPattern('users:claims:pending:*');
+    //   await this.cacheService.delPattern(`user:${targetUserId}*`);
+    // }
 
     // Fire Event: Tell the Worker they were rejected
     this.eventEmitter.emit('profile.claim.rejected', {

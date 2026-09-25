@@ -6,13 +6,22 @@ import { User } from 'src/users/entities/users.entity';
 import { EmployeeProfile } from './entities/employee-profile.entity';
 import { AddressModule } from 'src/address/address.module';
 import { Department } from 'src/departments/entities/department.entity';
+import { EmployeeFinancial } from './entities/employee-financial.entity';
+import { EmployeeSalaryHistory } from './entities/employee-salary-history.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, EmployeeProfile, Department]),
+    TypeOrmModule.forFeature([
+      User,
+      EmployeeProfile,
+      EmployeeFinancial,
+      EmployeeSalaryHistory,
+      Department,
+    ]),
     AddressModule,
   ],
   controllers: [ProfilesController],
-  providers: [ProfilesService, TypeOrmModule],
+  providers: [ProfilesService],
+  exports: [ProfilesService, TypeOrmModule],
 })
 export class ProfilesModule {}

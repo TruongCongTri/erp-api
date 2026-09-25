@@ -7,7 +7,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { Logger } from '@nestjs/common';
-import { JwtPayload } from 'src/auth/strategies/jwt.strategy';
+import { JwtPayload } from 'src/auth/dto/auth.dto';
 
 @WebSocketGateway({
   cors: { origin: '*' }, // Configure securely for your FE domain in production

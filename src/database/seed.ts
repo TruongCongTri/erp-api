@@ -1,45 +1,36 @@
 // src/database/seed.ts
 import 'tsconfig-paths/register';
-import dataSource from '../config/typeorm.config'; // Direct import of the CLI DataSource
+import * as dotenv from 'dotenv';
+// Nạp biến môi trường cho quá trình seed CLI
+dotenv.config({ path: ['.env.development.local', '.env.local', '.env'] });
 
-// un-comment for local use
-// import { DataSource } from 'typeorm';
-// import { typeOrmConfigFactory } from '../config/typeorm.config';
-// import { ConfigService } from '@nestjs/config';
+import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
 import Redis from 'ioredis';
+import dataSource from '../config/typeorm.config';
+
 import { SystemResource } from '../resources/entities/system-resource.entity';
 import { Permission } from '../permissions/entities/permission.entity';
 import { Role } from '../roles/entities/role.entity';
 import { UserStatus } from '../users/enums/user-status.enum';
 import { PermissionAction } from '../permissions/enums/permission-action.enum';
 import { PermissionScope } from '../permissions/enums/permission-scope.enum';
-import { CitizenIdentityCard } from 'src/identity/entities/citizen-identity.entity';
+import {
+  CitizenIdentityCard,
+  IdentityCardStatus,
+} from 'src/identity/entities/citizen-identity.entity';
 import { Gender } from 'src/identity/enums/citizen-identity.enum';
 import { EmployeeProfile } from 'src/employee-profiles/entities/employee-profile.entity';
+import { EmployeeFinancial } from 'src/employee-profiles/entities/employee-financial.entity';
+import { EmployeeSalaryHistory } from 'src/employee-profiles/entities/employee-salary-history.entity';
 import { User } from 'src/users/entities/users.entity';
+import { Department } from 'src/departments/entities/department.entity';
+import { CryptoUtil } from 'src/common/utils/crypto.util';
 
 import { resourcesData } from 'src/data/resources';
 import { rolesMatrix } from 'src/data/roles-matrix';
 import { employeeRoster } from 'src/data/users';
 import { departmentsData } from 'src/data/departments';
-import { Department } from 'src/departments/entities/department.entity';
-
-// A mock ConfigService to satisfy the TypeORM Factory outside of NestJS
-// const mockConfigService = {
-//   get: <T>(key: string, defaultValue?: T): T => {
-//     const envValue = process.env[key];
-//     if (envValue !== undefined) {
-//       if (typeof defaultValue === 'number') {
-//         return parseInt(envValue, 10) as unknown as T;
-//       }
-//       return envValue as unknown as T;
-//     }
-//     return defaultValue as T;
-//   },
-// } as unknown as ConfigService;
-
-// const dataSource = new DataSource(typeOrmConfigFactory(mockConfigService));
 
 function expandPermissionWildcards(
   permString: string,
@@ -73,13 +64,11 @@ function expandPermissionWildcards(
 async function runSeed() {
   console.log('🌱 Starting Database Seed...');
 
+  const encryptionKey =
+    process.env.DATA_ENCRYPTION_KEY || 'chinhnam-ats-encryption-key-32ch';
+
   // A. Clear Redis Cache
   console.log('🧹 Clearing Redis cache to prevent stale UUIDs...');
-  // const redis = new Redis({
-  //   host: process.env.REDIS_HOST || 'localhost',
-  //   port: parseInt(process.env.REDIS_PORT || '6379', 10),
-  //   password: process.env.REDIS_PASSWORD || undefined,
-  // });
   const isTls =
     process.env.REDIS_TLS === 'true' ||
     !!process.env.REDIS_URL?.startsWith('rediss://');
@@ -104,9 +93,9 @@ async function runSeed() {
     await redis.quit();
   }
 
-  // B. Initialize Connection and Reset Public Schema on Supabase
+  // B. Initialize Connection and Reset Public Schema
   await dataSource.initialize();
-  console.log('🧹 Resetting public schema on Supabase...');
+  console.log('🧹 Resetting public schema on Database...');
 
   await dataSource.query(`
     DROP SCHEMA public CASCADE; 
@@ -128,6 +117,8 @@ async function runSeed() {
   const userRepo = dataSource.getRepository(User);
   const profileRepo = dataSource.getRepository(EmployeeProfile);
   const identityRepo = dataSource.getRepository(CitizenIdentityCard);
+  const financialRepo = dataSource.getRepository(EmployeeFinancial);
+  const salaryRepo = dataSource.getRepository(EmployeeSalaryHistory);
   const departmentRepo = dataSource.getRepository(Department);
 
   // 1. Bulk Seed Resources (Deduplicated by slug)
@@ -211,7 +202,7 @@ async function runSeed() {
   }
   console.log('✅ Permissions generated and indexed in memory!');
 
-  // 3. Seed Roles with Mapped Permissions (Deduplicated by slug)
+  // 3. Seed Roles with Mapped Permissions
   console.log('🛡️ Seeding Roles...');
   let superAdminRole: Role | null = null;
   const uniqueRolesMap = new Map<string, (typeof rolesMatrix)[0]>();
@@ -250,7 +241,7 @@ async function runSeed() {
   }
   console.log(`✅ Seeded ${savedRoles.length} roles with permissions.`);
 
-  // 4. Seed Departments (Hierarchical, Deduplicated by slug)
+  // 4. Seed Departments
   console.log('🏢 Seeding Departments...');
   const uniqueDeptsMap = new Map<string, (typeof departmentsData)[0]>();
   for (const d of departmentsData) {
@@ -280,8 +271,8 @@ async function runSeed() {
   }
   console.log(`✅ Seeded ${Object.keys(savedDepts).length} Departments!`);
 
-  // 5. Seed Profiles and Users
-  console.log('👥 Seeding Employee Profiles and Accounts...');
+  // 5. Seed Profiles, Identity Cards, Financials, Salaries & Users
+  console.log('👥 Seeding Employee Profiles, Identity & Financial Records...');
   const defaultPassword = await bcrypt.hash('ChinhNam@2026', 10);
   let seededCount = 0;
 
@@ -308,10 +299,23 @@ async function runSeed() {
         d.slug?.trim().toLowerCase() === targetDeptName,
     );
 
+    // Chuẩn bị dữ liệu CCCD mã hóa và Blind Index
     const deterministicCccd = `079${String(i + 1).padStart(9, '0')}`;
+    const cccdLastFour = deterministicCccd.slice(-4);
+    const cccdNumberHash = crypto
+      .createHmac('sha256', encryptionKey)
+      .update(deterministicCccd)
+      .digest('hex');
+    const cccdNumberEncrypted = CryptoUtil.encrypt(
+      deterministicCccd,
+      encryptionKey,
+    );
 
+    // 5.1. Tạo CitizenIdentityCard (Đã fix thuộc tính khớp Entity mới)
     const identityCard = identityRepo.create({
-      cccdNumber: deterministicCccd,
+      cccdNumberHash,
+      cccdNumberEncrypted,
+      cccdLastFour,
       fullName: emp.fullName.trim(),
       dateOfBirth: new Date('1992-01-01'),
       gender: Gender.MALE,
@@ -321,9 +325,11 @@ async function runSeed() {
       dateOfIssue: new Date('2024-01-01'),
       dateOfExpiry: new Date('2040-01-01'),
       placeOfIssue: 'Cục Cảnh sát QLHC về TTXH',
+      status: IdentityCardStatus.VERIFIED,
     });
     const savedIdentity = await identityRepo.save(identityCard);
 
+    // 5.2. Tạo EmployeeProfile
     const profile = profileRepo.create({
       employeeCode: cleanEmployeeCode,
       jobTitle: emp.jobTitle.trim(),
@@ -339,6 +345,36 @@ async function runSeed() {
     });
     const savedProfile = await profileRepo.save(profile);
 
+    // 5.3. Tạo EmployeeFinancial (Mã số thuế & BHXH mã hóa)
+    const rawTaxCode = `031${String(i + 1).padStart(7, '0')}`;
+    const rawSocialInsurance = `79${String(i + 1).padStart(8, '0')}`;
+
+    const financial = financialRepo.create({
+      profileId: savedProfile.id,
+      taxCodeEncrypted: CryptoUtil.encrypt(rawTaxCode, encryptionKey),
+      socialInsuranceNumberEncrypted: CryptoUtil.encrypt(
+        rawSocialInsurance,
+        encryptionKey,
+      ),
+    });
+    await financialRepo.save(financial);
+
+    // 5.4. Tạo EmployeeSalaryHistory (Lương cơ bản & phụ cấp mã hóa)
+    const baseSalary = 18000000 + i * 500000;
+    const extraSalary = 2000000;
+
+    const salaryHistory = salaryRepo.create({
+      profileId: savedProfile.id,
+      baseSalaryEncrypted: CryptoUtil.encrypt(baseSalary, encryptionKey),
+      extraSalaryEncrypted: CryptoUtil.encrypt(extraSalary, encryptionKey),
+      currency: 'VND',
+      effectiveDate: new Date('2026-01-01'),
+      note: 'Mức lương khởi điểm theo hợp đồng lao động',
+      isCurrent: true,
+    });
+    await salaryRepo.save(salaryHistory);
+
+    // 5.5. Tự động cấp tài khoản đăng nhập cho các vị trí quản lý
     if (autoProvisionUserRoles.includes(emp.roleSlug)) {
       const user = userRepo.create({
         email: emp.email.trim(),
@@ -359,7 +395,9 @@ async function runSeed() {
     seededCount++;
   }
 
-  console.log(`✅ Successfully seeded ${seededCount} profiles!`);
+  console.log(
+    `✅ Successfully seeded ${seededCount} profiles & financial data!`,
+  );
   await dataSource.destroy();
   console.log('🎉 Seeding Complete!');
 }

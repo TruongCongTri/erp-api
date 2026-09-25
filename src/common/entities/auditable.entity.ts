@@ -2,19 +2,28 @@ import {
   Column,
   CreateDateColumn,
   DeleteDateColumn,
+  Index,
   UpdateDateColumn,
 } from 'typeorm';
 
 export abstract class AuditableEntity {
-  @CreateDateColumn({ name: 'created_at' })
+  // 1. Đánh index phục vụ ORDER BY created_at DESC ở các API phân trang
+  @Index()
+  @CreateDateColumn({
+    name: 'created_at',
+    type: 'timestamptz',
+  })
   createdAt!: Date;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @UpdateDateColumn({
+    name: 'updated_at',
+    type: 'timestamptz',
+  })
   updatedAt!: Date;
 
-  // Records the ID of the user who originally created the record
+  // 2. Metadata Audit người tạo (Denormalized Snapshot để triệt tiêu JOIN users)
   @Column({ type: 'uuid', name: 'created_by', nullable: true })
-  createdBy?: string;
+  createdBy?: string | null;
 
   @Column({
     type: 'varchar',
@@ -22,11 +31,15 @@ export abstract class AuditableEntity {
     name: 'created_by_name',
     nullable: true,
   })
-  createdByName?: string;
+  createdByName?: string | null;
 
-  // Records the ID of the user who last modified the record
-  @Column({ type: 'uuid', name: 'updated_by', nullable: true })
-  updatedBy?: string;
+  // 3. Metadata Audit người cập nhật
+  @Column({
+    type: 'uuid',
+    name: 'updated_by',
+    nullable: true,
+  })
+  updatedBy?: string | null;
 
   @Column({
     type: 'varchar',
@@ -34,12 +47,23 @@ export abstract class AuditableEntity {
     name: 'updated_by_name',
     nullable: true,
   })
-  updatedByName?: string;
+  updatedByName?: string | null;
 
-  @DeleteDateColumn({ name: 'deleted_at' })
+  // 4. Soft Delete Columns - Đặt select: false để tối ưu triệt để Network Payload và RAM Cache
+  @DeleteDateColumn({
+    name: 'deleted_at',
+    type: 'timestamptz',
+    nullable: true,
+    select: false, // Ẩn khỏi câu SELECT mặc định
+  })
   deletedAt?: Date | null;
 
-  @Column({ type: 'uuid', name: 'deleted_by', nullable: true })
+  @Column({
+    type: 'uuid',
+    name: 'deleted_by',
+    nullable: true,
+    select: false, // Ẩn khỏi câu SELECT mặc định
+  })
   deletedBy?: string | null;
 
   @Column({
@@ -47,6 +71,7 @@ export abstract class AuditableEntity {
     length: 255,
     name: 'deleted_by_name',
     nullable: true,
+    select: false, // Ẩn khỏi câu SELECT mặc định
   })
   deletedByName?: string | null;
 }

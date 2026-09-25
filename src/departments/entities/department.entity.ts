@@ -12,16 +12,20 @@ import { EmployeeProfile } from 'src/employee-profiles/entities/employee-profile
 import { User } from 'src/users/entities/users.entity';
 
 @Entity('departments')
-@Index('idx_department_slug', ['slug'], { unique: true })
-@Index('idx_department_code', ['code'], { unique: true })
-@Index('idx_department_org', ['organizationId', 'isActive'])
-@Index('idx_department_parent', ['parentId'])
+// 1. Composite Index phục vụ lọc theo tổ chức và trạng thái hoạt động (kết hợp soft-delete)
+@Index('idx_departments_org_active_deleted', [
+  'organizationId',
+  'isActive',
+  'deletedAt',
+])
+// 2. Index phục vụ sắp xếp ORDER BY name và tìm kiếm
+@Index('idx_departments_name', ['name'])
 export class Department extends AuditableEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Index({ unique: true })
-  @Column({ length: 64 })
+  // Cột unique tự sinh Unique B-Tree Index (loại bỏ khai báo thừa ở class decorator)
+  @Column({ length: 64, unique: true })
   slug!: string; // e.g., 'hr', 'mep', 'construction', 'finance'
 
   @Column({ name: 'code', length: 32, unique: true })
@@ -30,10 +34,12 @@ export class Department extends AuditableEntity {
   @Column({ name: 'name', length: 150 })
   name!: string; // e.g., 'Hành chính Nhân sự', 'Cơ điện (MEP)'
 
+  @Index('idx_departments_org_id')
   @Column({ name: 'organization_id', type: 'uuid', nullable: true })
   organizationId?: string | null;
 
   // ─── Trưởng bộ phận (Dùng để auto-assign ticket / duyệt đơn) ───
+  @Index('idx_departments_head_user_id')
   @Column({ name: 'head_user_id', type: 'uuid', nullable: true })
   headUserId?: string | null;
 
@@ -42,6 +48,7 @@ export class Department extends AuditableEntity {
   headUser?: User | null;
 
   // ─── Phân cấp phòng ban (Cây thư mục) ───
+  @Index('idx_departments_parent_id')
   @Column({ name: 'parent_id', type: 'uuid', nullable: true })
   parentId?: string | null;
 

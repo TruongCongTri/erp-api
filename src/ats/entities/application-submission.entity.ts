@@ -15,7 +15,16 @@ import {
 import { JobApplication } from './job-application.entity';
 
 @Entity('application_submissions')
-@Index('idx_submission_platform', ['platformSource', 'externalApplicationId'])
+// ── 1. Index Foreign Key liên kết Application (BẮT BUỘC) ──
+@Index('idx_submissions_application_id', ['applicationId'])
+// ── 2. Index cho Purge Worker tự động giải phóng S3 định kỳ ──
+@Index('idx_submission_purge_cron', ['isCvPurged', 'cvPurgeAt'])
+// ── 3. Index truy vấn theo nguồn tuyển dụng & Audit ──
+@Index('idx_submission_platform_audit', [
+  'platformSource',
+  'externalApplicationId',
+])
+@Index('idx_submission_app_created', ['applicationId', 'createdAt'])
 export class ApplicationSubmission extends AuditableEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -45,9 +54,6 @@ export class ApplicationSubmission extends AuditableEntity {
   })
   externalApplicationId?: string | null;
 
-  @Column({ name: 'cover_letter', type: 'text', nullable: true })
-  coverLetter?: string | null;
-
   @Column({ name: 'cv_url', type: 'varchar', length: 500 })
   cvUrl!: string;
 
@@ -56,9 +62,6 @@ export class ApplicationSubmission extends AuditableEntity {
 
   @Column({ name: 'ai_score', type: 'smallint', nullable: true })
   aiScore?: number | null;
-
-  @Column({ name: 'ai_reasoning', type: 'text', nullable: true })
-  aiReasoning?: string | null;
 
   @Column({ name: 'ai_tier', type: 'varchar', length: 30, nullable: true })
   aiTier?: string | null;
@@ -77,11 +80,47 @@ export class ApplicationSubmission extends AuditableEntity {
   })
   cvStorageLocation!: CvStorageLocation; // Nơi tệp CV thực sự đang được lưu: S3 hoặc tạm trên đĩa cục bộ chờ upload lại
 
+  // ─── Heavy Data Columns (select: false để giải phóng băng thông mạng) ───
   // ─── AI Extraction & Scoring Audit ───
+
+  @Column({ name: 'cover_letter', type: 'text', nullable: true, select: false })
+  coverLetter?: string | null;
+
+  @Column({ name: 'ai_reasoning', type: 'text', nullable: true, select: false })
+  aiReasoning?: string | null;
 
   @Column({ name: 'raw_cv_text', type: 'text', nullable: true, select: false })
   rawCvText?: string | null;
 
+  @Column({
+    name: 'extracted_summary',
+    type: 'text',
+    nullable: true,
+    select: false,
+  })
+  extractedSummary?: string | null;
+
+  @Column({
+    name: 'extracted_employment_history',
+    type: 'jsonb',
+    nullable: true,
+    select: false,
+  })
+  extractedEmploymentHistory?: Array<{
+    company: string;
+    role: string;
+    durationMonths: number;
+  }> | null;
+
+  @Column({
+    name: 'scoring_breakdown',
+    type: 'jsonb',
+    nullable: true,
+    select: false,
+  })
+  scoringBreakdown?: Record<string, unknown> | null;
+
+  //
   @Column({
     name: 'extracted_hard_skills',
     type: 'text',
@@ -122,23 +161,6 @@ export class ApplicationSubmission extends AuditableEntity {
     default: '{}',
   })
   extractedCertifications?: string[];
-
-  @Column({
-    name: 'extracted_employment_history',
-    type: 'jsonb',
-    nullable: true,
-  })
-  extractedEmploymentHistory?: Array<{
-    company: string;
-    role: string;
-    durationMonths: number;
-  }> | null;
-
-  @Column({ name: 'extracted_summary', type: 'text', nullable: true })
-  extractedSummary?: string | null;
-
-  @Column({ name: 'scoring_breakdown', type: 'jsonb', nullable: true })
-  scoringBreakdown?: Record<string, unknown> | null;
 
   @Column({ name: 'matching_skills', type: 'text', array: true, default: '{}' })
   matchingSkills?: string[];

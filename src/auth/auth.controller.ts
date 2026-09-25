@@ -12,7 +12,8 @@ import {
   Query,
   Headers,
   UseInterceptors,
-  // UseInterceptors,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
@@ -25,9 +26,9 @@ import {
   SendOtpDto,
   VerifyOtpDto,
   RefreshTokenDto,
+  JwtUser,
 } from './dto/auth.dto';
 import { AuthService } from './auth.service';
-import { JwtPayload } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { PermissionsGuard } from 'src/common/guards/permissions.guard';
 import { RequirePermissions } from 'src/common/decorators/require-permissions.decorator';
@@ -41,9 +42,6 @@ import {
   CurrentUser,
 } from 'src/common/decorators/current-user.decorator';
 
-interface AuthenticatedRequest extends Request {
-  user: JwtPayload;
-}
 type RequestWithAuditUser = Request & {
   user?: Partial<ActiveUserData> & {
     departmentId?: string;
@@ -65,13 +63,14 @@ export class AuthController {
   @Post(ROUTES.AUTH.REGISTER) // /api/v1/auth/register
   @AuditAction({
     actionType: AuditActionType.CREATE,
-    actionLabel: 'Đăng ký',
+    actionLabel: 'Đăng ký tài khoản',
     resourceSlug: 'authentication',
     resourceLabel: 'Tài khoản',
   })
   async register(@Body() dto: RegisterDto) {
     const data = await this.authService.register(dto);
     return {
+      success: true,
       data,
       message: 'Registration successful. Please verify your account.',
     };
@@ -105,13 +104,13 @@ export class AuthController {
         (authUser.role?.level as ActorRoleLevel) || ActorRoleLevel.STAFF,
       jobTitle: authUser.jobTitle || 'Nhân viên',
     };
-    return { data, message: 'Login successful' };
+    return { success: true, data, message: 'Login successful' };
   }
 
   @Post(ROUTES.AUTH.GOOGLE) // /api/v1/auth/google
   @AuditAction({
     actionType: AuditActionType.LOGIN,
-    actionLabel: 'Đăng nhập Google',
+    actionLabel: 'Đăng nhập Google SSO',
     resourceSlug: 'authentication',
     resourceLabel: 'Tài khoản',
   })
@@ -135,41 +134,45 @@ export class AuthController {
       departmentId: authUser.department?.id || 'GLOBAL',
       roleLevel:
         (authUser.role?.level as ActorRoleLevel) || ActorRoleLevel.STAFF,
-      jobTitle: authUser.jobTitle || 'Nhân viên',
+      jobTitle: authUser.jobTitle || 'Người dùng SSO',
     };
-    return { data, message: 'Google login successful' };
+    return { success: true, data, message: 'Google login successful' };
   }
 
   @Throttle({ default: { limit: 2, ttl: 60000 } }) // 2 resets per minute
   @Post(ROUTES.AUTH.FORGOT_PASSWORD) // /api/v1/auth/forgot-password
   @AuditAction({
     actionType: AuditActionType.UPDATE,
-    actionLabel: 'Quên mật khẩu',
+    actionLabel: 'Yêu cầu quên mật khẩu',
     resourceSlug: 'authentication',
     resourceLabel: 'Bảo mật tài khoản',
   })
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
     await this.authService.forgotPassword(dto.email, dto.channel);
-    return { message: 'If the email exists, an OTP has been sent.' };
+    return {
+      success: true,
+      message: 'If the email exists, an OTP has been sent.',
+    };
   }
 
   @Post(ROUTES.AUTH.RESET_PASSWORD) // /api/v1/auth/reset-password
   @AuditAction({
     actionType: AuditActionType.UPDATE,
-    actionLabel: 'Đặt lại mật khẩu',
+    actionLabel: 'Đặt lại mật khẩu qua OTP',
     resourceSlug: 'authentication',
     resourceLabel: 'Bảo mật tài khoản',
   })
   async resetPassword(@Body() dto: ResetPasswordDto) {
     await this.authService.resetPassword(dto);
-    return { message: 'Password reset successfully' };
+    return { success: true, message: 'Password reset successfully' };
   }
 
   @Post(ROUTES.AUTH.REFRESH) // /api/v1/auth/refresh
+  @HttpCode(HttpStatus.OK)
   // Không gắn Audit Log cho Refresh Token vì tần suất gọi ngầm cực cao -> Rác database
   async refreshToken(@Body() dto: RefreshTokenDto) {
     const data = await this.authService.refreshToken(dto.refreshToken);
-    return { data, message: 'Token refreshed successfully' };
+    return { success: true, data, message: 'Token refreshed successfully' };
   }
 
   // =====================================
@@ -180,12 +183,12 @@ export class AuthController {
   @Get(ROUTES.USERS.GET_ME) // /api/v1/auth/me
   // 💡 Read-only API, không cần Audit Log
   async getMe(
-    @Req() req: AuthenticatedRequest,
+    @CurrentUser() user: JwtUser,
     @Query('refresh') refresh?: string,
   ) {
     const forceRefresh = refresh === 'true';
-    const data = await this.authService.getMe(req.user.sub, forceRefresh);
-    return { data, message: 'Profile retrieved successfully' };
+    const data = await this.authService.getMe(user.id, forceRefresh);
+    return { success: true, data, message: 'Profile retrieved successfully' };
   }
 
   @UseGuards(JwtAuthGuard)
@@ -196,66 +199,64 @@ export class AuthController {
     resourceSlug: 'authentication',
     resourceLabel: 'Tài khoản',
   })
-  async logout(
-    @CurrentUser() user: ActiveUserData,
-    @Req() req: AuthenticatedRequest,
-  ) {
-    (req as RequestWithAuditUser).user = user;
+  async logout(@CurrentUser() user: JwtUser, @Req() req: Request) {
+    (req as RequestWithAuditUser).user = {
+      id: user.id,
+      fullName: user.fullName,
+    };
 
-    await this.authService.logout(req.user.sub, req.user.sessionId);
-    return { message: 'Logged out successfully' };
+    await this.authService.logout(user.id, user.sessionId);
+    return { success: true, message: 'Logged out successfully' };
   }
 
   @UseGuards(JwtAuthGuard)
   @Patch(ROUTES.AUTH.CHANGE_PASSWORD) // /api/v1/auth/change-password
   @AuditAction({
     actionType: AuditActionType.UPDATE,
-    actionLabel: 'Đổi mật khẩu',
+    actionLabel: 'Đổi mật khẩu tài khoản',
     resourceSlug: 'authentication',
     resourceLabel: 'Bảo mật tài khoản',
   })
   async changePassword(
-    @Req() req: AuthenticatedRequest,
+    @CurrentUser() user: JwtUser,
     @Body() dto: ChangePasswordDto,
   ) {
-    await this.authService.changePassword(req.user.sub, dto);
-    return { message: 'Password changed successfully' };
+    await this.authService.changePassword(user.id, dto);
+    return { success: true, message: 'Password changed successfully' };
   }
 
   // 2. Ultra-strict limit for OTP (Prevent SMS/Email cost spikes: Max 1 per 60 seconds)
   @Throttle({ default: { limit: 1, ttl: 60000 } })
   @UseGuards(JwtAuthGuard)
   @Post(ROUTES.AUTH.SEND_OTP) // /api/v1/auth/otp/send
+  @HttpCode(HttpStatus.OK)
   // @AuditAction({
   //   action: 'SEND_OTP',
   //   resource: 'auth/otp/send',
   //   category: AuditCategory.AUTH,
   // }) // <-- AUDIT
-  async sendVerifyOTP(
-    @Req() req: AuthenticatedRequest,
-    @Body() dto: SendOtpDto,
-  ) {
-    await this.authService.sendVerifyOTP(req.user.sub, dto.channel);
-    return { message: 'Verification OTP sent' };
+  async sendVerifyOTP(@CurrentUser() user: JwtUser, @Body() dto: SendOtpDto) {
+    await this.authService.sendVerifyOTP(user.id, dto.channel);
+    return { success: true, message: 'Verification OTP sent' };
   }
 
   @UseGuards(JwtAuthGuard)
   @Post(ROUTES.AUTH.VERIFY_OTP) // /api/v1/auth/otp/verify
   @AuditAction({
     actionType: AuditActionType.UPDATE,
-    actionLabel: 'Xác thực OTP',
+    actionLabel: 'Xác thực tài khoản qua OTP',
     resourceSlug: 'authentication',
     resourceLabel: 'Bảo mật tài khoản',
   })
-  async verifyOTP(@Req() req: AuthenticatedRequest, @Body() dto: VerifyOtpDto) {
-    await this.authService.verifyOTP(req.user.sub, dto.otp);
-    return { message: 'Account verified successfully' };
+  async verifyOTP(@CurrentUser() user: JwtUser, @Body() dto: VerifyOtpDto) {
+    await this.authService.verifyOTP(user.id, dto.otp);
+    return { success: true, message: 'Account verified successfully' };
   }
 
   @Post('verify-email')
   @AuditAction({
     actionType: AuditActionType.UPDATE,
-    actionLabel: 'Xác minh Email',
+    actionLabel: 'Xác minh Email qua Token',
     resourceSlug: 'authentication',
     resourceLabel: 'Tài khoản',
   })
@@ -288,7 +289,9 @@ export class AuthController {
     };
   }
 
+  @Throttle({ default: { limit: 1, ttl: 60000 } }) // Cooldown 60s
   @Post('resend-verification')
+  @HttpCode(HttpStatus.OK)
   // @AuditAction({
   //   action: 'RESEND_VERIFICATION_EMAIL',
   //   resource: 'auth/resend-verification',
@@ -298,9 +301,7 @@ export class AuthController {
     const result =
       await this.authService.resendVerificationEmailCooldown(userId);
 
-    return {
-      message: result.message,
-    };
+    return { success: true, message: result.message };
   }
 
   // --- Session Management ---
@@ -308,9 +309,9 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @Get(ROUTES.AUTH.SESSION) // /api/v1/auth/sessions
   // NOTE: AuditAction omitted here for the same reason as getMe (read-only self-fetch)
-  async getActiveSessions(@Req() req: AuthenticatedRequest) {
-    const data = await this.authService.getActiveSessions(req.user.sub);
-    return { data, message: 'Active sessions retrieved' };
+  async getActiveSessions(@CurrentUser() user: JwtUser) {
+    const data = await this.authService.getActiveSessions(user.id);
+    return { success: true, data, message: 'Active sessions retrieved' };
   }
 
   @UseGuards(JwtAuthGuard)
@@ -322,11 +323,11 @@ export class AuthController {
     resourceLabel: 'Phiên hoạt động',
   })
   async revokeDeviceSession(
-    @Req() req: AuthenticatedRequest,
+    @CurrentUser() user: JwtUser,
     @Param('sessionId') sessionId: string,
   ) {
-    await this.authService.revokeDeviceSession(req.user.sub, sessionId);
-    return { message: 'Device session revoked' };
+    await this.authService.revokeDeviceSession(user.id, sessionId);
+    return { success: true, message: 'Device session revoked' };
   }
 
   @UseGuards(JwtAuthGuard)
@@ -337,12 +338,9 @@ export class AuthController {
     resourceSlug: 'session',
     resourceLabel: 'Phiên hoạt động',
   })
-  async revokeOtherSessions(@Req() req: AuthenticatedRequest) {
-    await this.authService.revokeOtherSessions(
-      req.user.sub,
-      req.user.sessionId,
-    );
-    return { message: 'All other sessions revoked' };
+  async revokeOtherSessions(@CurrentUser() user: JwtUser) {
+    await this.authService.revokeOtherSessions(user.id, user.sessionId);
+    return { success: true, message: 'All other sessions revoked' };
   }
 
   // =====================================
@@ -361,7 +359,7 @@ export class AuthController {
   })
   async adminTriggerPasswordReset(@Param('id') id: string) {
     await this.authService.adminTriggerPasswordReset(id);
-    return { message: 'Password reset triggered for user' };
+    return { success: true, message: 'Password reset triggered for user' };
   }
 
   @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -376,7 +374,7 @@ export class AuthController {
   })
   async adminRevokeAllUserSessions(@Param('id') id: string) {
     await this.authService.adminRevokeAllUserSessions(id);
-    return { message: 'All sessions revoked for user' };
+    return { success: true, message: 'All sessions revoked for user' };
   }
 
   @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -391,6 +389,6 @@ export class AuthController {
   })
   async adminVerifyUserEmail(@Param('id') id: string) {
     await this.authService.adminVerifyUserEmail(id);
-    return { message: 'User verified manually by admin' };
+    return { success: true, message: 'User verified manually by admin' };
   }
 }

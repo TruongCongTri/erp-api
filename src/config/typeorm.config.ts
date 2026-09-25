@@ -152,6 +152,12 @@ const parseBoolean = (val: unknown, fallback = true): boolean => {
   );
 };
 
+// Chuẩn hóa đường dẫn Entity và Migration bằng path.join (tương thích Windows & Linux)
+const ENTITIES_PATH = [path.join(__dirname, '..', '**', '*.entity{.ts,.js}')];
+const MIGRATIONS_PATH = [
+  path.join(__dirname, '..', 'migrations', '*{.ts,.js}'),
+];
+
 // 2. Factory for NestJS runtime (app.module.ts)
 export const typeOrmConfigFactory = (
   configService: ConfigService,
@@ -199,9 +205,11 @@ export const typeOrmConfigFactory = (
   return {
     type: 'postgres',
     ...connectionProps,
-    entities: [__dirname + '/../**/*.entity{.ts,.js}'],
+    // entities: [__dirname + '/../**/*.entity{.ts,.js}'],
+    entities: ENTITIES_PATH,
     synchronize: false,
-    migrations: [__dirname + '/../migrations/*{.ts,.js}'],
+    // migrations: [__dirname + '/../migrations/*{.ts,.js}'],
+    migrations: MIGRATIONS_PATH,
     migrationsTableName: 'migrations_history',
     logging: configService.get<string>('NODE_ENV') === 'development',
     retryAttempts: 5,
@@ -226,9 +234,11 @@ const cliConnectionProps = buildConnectionOptions(
 const cliConfig: DataSourceOptions = {
   type: 'postgres',
   ...cliConnectionProps,
-  entities: [__dirname + '/../**/*.entity{.ts,.js}'],
+  // entities: [__dirname + '/../**/*.entity{.ts,.js}'],
+  entities: ENTITIES_PATH,
   synchronize: false,
-  migrations: [__dirname + '/../migrations/*{.ts,.js}'],
+  // migrations: [__dirname + '/../migrations/*{.ts,.js}'],
+  migrations: MIGRATIONS_PATH,
   migrationsTableName: 'migrations_history',
   logging: true,
 };

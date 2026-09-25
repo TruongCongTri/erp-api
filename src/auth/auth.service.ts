@@ -19,8 +19,8 @@ import {
   GoogleLoginDto,
   ResetPasswordDto,
   ChangePasswordDto,
+  JwtPayload,
 } from './dto/auth.dto';
-import { JwtPayload } from './strategies/jwt.strategy';
 import { User } from 'src/users/entities/users.entity';
 import { UserStatus } from 'src/users/enums/user-status.enum';
 import { ZaloService } from 'src/common/services/zalo.service';
@@ -34,7 +34,7 @@ import { RESOURCES } from 'src/common/constants/resources.constant';
 import * as crypto from 'crypto';
 import { MailService } from 'src/mail/mail.service';
 import { Role } from 'src/roles/entities/role.entity';
-import { instanceToPlain } from 'class-transformer';
+// import { instanceToPlain } from 'class-transformer';
 
 export interface ActiveSession {
   sessionId: string;
@@ -45,6 +45,8 @@ export interface ActiveSession {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
@@ -114,27 +116,31 @@ export class AuthService {
     isPattern: true,
   })
   async register(dto: RegisterDto): Promise<Omit<User, 'passwordHash'>> {
-    const existing = await this.userRepository.findOneBy({ email: dto.email });
+    const normalizedEmail = dto.email.trim().toLowerCase();
+
+    // 1. Index Scan: Kiểm tra trùng email (O(1) Index Unique)
+    const existing = await this.userRepository.findOne({
+      where: { email: normalizedEmail },
+      select: { id: true },
+    });
     if (existing) throw new ConflictException(MESSAGES.ERROR.AUTH.REGISTERED);
 
-    // 1. Fetch default GUEST role
-    const guestRole = await this.roleRepository.findOneBy({ slug: 'GUEST' });
+    // 2. Fetch GUEST role có sẵn
+    const guestRole = await this.roleRepository.findOne({
+      where: { slug: 'GUEST' },
+      select: { id: true, slug: true },
+    });
     if (!guestRole) {
-      throw new InternalServerErrorException(
-        'System GUEST role is missing. Please run database seeds.',
-      );
+      throw new InternalServerErrorException('System GUEST role is missing.');
     }
 
-    // 2. Hash password & khởi tạo user (đã gán role chính xác)
+    // 3. Khởi tạo tài khoản
     const hashedPassword = await bcrypt.hash(dto.password, 10);
-
-    // 3. Khởi tạo user với đúng tên thuộc tính trong User Entity:
-    // - Dùng `role: guestRole` thay vì `roles: [guestRole]`
-    // - Dùng tên cột password đúng trong entity (ví dụ `password: hashedPassword`)
     const user = this.userRepository.create({
       ...dto,
-      passwordHash: hashedPassword, // 👈 Đổi 'passwordHash' thành 'password' (hoặc đúng tên cột trong User entity của bạn)
-      role: guestRole, // 👈 Đổi 'roles: [guestRole]' thành 'role: guestRole'
+      email: normalizedEmail,
+      passwordHash: hashedPassword,
+      role: guestRole,
       status: UserStatus.PENDING_VERIFICATION,
     });
 
@@ -171,7 +177,10 @@ export class AuthService {
   }
 
   async sendVerificationEmail(userId: string): Promise<void> {
-    const user = await this.userRepository.findOneBy({ id: userId });
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: { id: true, email: true },
+    });
     if (!user) throw new NotFoundException('User not found');
 
     const token = crypto.randomBytes(32).toString('hex');
@@ -183,20 +192,20 @@ export class AuthService {
     await this.mailService.sendVerificationLink(user.email, user.id, token);
   }
 
-  // (Login methods bypass standard caching because they require strictly hitting the
-  // DB to compare realtime password hashes and verify the active status)
+  /**
+   * Đăng nhập chuẩn cục bộ
+   * [Tiêu chí 2]: 1 Query duy nhất lấy thông tin đăng nhập và Role
+   */
   async login(dto: LoginDto, deviceInfo: string) {
-    const user = await this.userRepository.findOne({
-      where: { email: dto.email },
-      select: {
-        id: true,
-        email: true,
-        passwordHash: true,
-        status: true,
-        fullName: true,
-      },
-      relations: { role: true },
-    });
+    const normalizedEmail = dto.email.trim().toLowerCase();
+
+    // Tối ưu Query: 1 QueryBuilder duy nhất kèm role
+    const user = await this.userRepository
+      .createQueryBuilder('user')
+      .addSelect('user.passwordHash')
+      .leftJoinAndSelect('user.role', 'role')
+      .where('LOWER(user.email) = :email', { email: normalizedEmail })
+      .getOne();
 
     if (!user || !user.passwordHash)
       throw new UnauthorizedException(MESSAGES.ERROR.AUTH.INVALID_CREDENTIALS);
@@ -236,15 +245,20 @@ export class AuthService {
   }
 
   async googleLogin(profile: GoogleLoginDto, deviceInfo: string) {
+    const normalizedEmail = profile.email.trim().toLowerCase();
+
     let user = await this.userRepository.findOne({
-      where: { email: profile.email },
+      where: { email: normalizedEmail },
       relations: { role: true },
     });
 
     // 1. FIRST TIME GOOGLE LOGIN
     if (!user) {
       // Fetch the default GUEST role
-      const guestRole = await this.roleRepository.findOneBy({ slug: 'GUEST' });
+      const guestRole = await this.roleRepository.findOne({
+        where: { slug: 'GUEST' },
+        select: { id: true, slug: true },
+      });
       if (!guestRole) {
         throw new InternalServerErrorException('System GUEST role is missing.');
       }
@@ -305,9 +319,18 @@ export class AuthService {
   }
 
   async logout(userId: string, sessionId: string): Promise<void> {
-    await this.cacheService.del(`session:${userId}:${sessionId}`);
+    // await this.cacheService.del(`session:${userId}:${sessionId}`);
+    await this.revokeDeviceSession(userId, sessionId);
   }
 
+  // =========================================================================
+  // 2. USER PROFILE & PERMISSIONS (getMe)
+  // =========================================================================
+
+  /**
+   * Lấy thông tin phiên làm việc và danh sách quyền hợp nhất của người dùng
+   * [Tiêu chí 2, 3 & 4]: 1 Single QueryBuilder JOIN, Cache 24h, loại bỏ serialize dư thừa
+   */
   // : Promise<Partial<User>>
   // Unified Cache Key! Shares the exact same data payload as UsersService.findOne
   @Cacheable({
@@ -316,22 +339,36 @@ export class AuthService {
     ttlSeconds: 86400, // 24 Hours
   })
   async getMe(userId: string, _bypassCache?: boolean) {
-    const user = await this.userRepository.findOne({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        fullName: true,
-        avatarUrl: true,
-        status: true,
-        passwordHash: true,
-      },
-      relations: {
-        profile: true,
-        bonusPermissions: true,
-        role: { permissions: true },
-      },
-    });
+    // 1 QueryBuilder duy nhất giải quyết triệt để N+1
+    const user = await this.userRepository
+      .createQueryBuilder('user')
+      .addSelect('user.passwordHash')
+      .leftJoinAndSelect('user.role', 'role')
+      .leftJoinAndSelect('role.permissions', 'rolePerm')
+      .leftJoinAndSelect('user.bonusPermissions', 'bonusPerm')
+      .leftJoinAndSelect('user.profile', 'profile')
+      .where('user.id = :userId', { userId })
+      .select([
+        'user.id',
+        'user.email',
+        'user.fullName',
+        'user.avatarUrl',
+        'user.status',
+        'user.passwordHash',
+        'role.id',
+        'role.name',
+        'role.slug',
+        'role.isLive',
+        'rolePerm.id',
+        'rolePerm.slug',
+        'bonusPerm.id',
+        'bonusPerm.slug',
+        'profile.id',
+        'profile.employeeCode',
+        'profile.jobTitle',
+        'profile.department',
+      ])
+      .getOne();
     if (!user)
       throw new NotFoundException(
         MESSAGES.ERROR.NOT_FOUND(RESOURCES.USER.BASE),
@@ -341,29 +378,26 @@ export class AuthService {
       user.role?.isLive && user.role.permissions
         ? user.role.permissions.map((p) => p.slug)
         : [];
-
     const bonusPerms = user.bonusPermissions
       ? user.bonusPermissions.map((p) => p.slug)
       : [];
-
     const uniquePermissions = Array.from(
       new Set([...rolePerms, ...bonusPerms]),
     );
 
     const hasPassword = Boolean(user.passwordHash);
-
-    const plainUser = instanceToPlain(user);
-    delete plainUser.passwordHash; // Không trả hash ra client
+    // Tối ưu V8: Loại bỏ passwordHash bằng destructuring
+    const { passwordHash: _, ...sanitizedUser } = user;
 
     return {
-      ...plainUser,
+      ...sanitizedUser,
       hasPassword, // Flag quan trọng để Frontend render UI
       permissions: uniquePermissions,
     };
   }
 
   // =====================================
-  // PASSWORD MANAGEMENT
+  // 3. PASSWORD MANAGEMENT & RECOVERY
   // =====================================
 
   async forgotPassword(
@@ -371,9 +405,11 @@ export class AuthService {
     channel: 'email' | 'zalo',
   ): Promise<void> {
     console.log(`Forgot password requested for ${email} via ${channel}`);
+    const normalizedEmail = email.trim().toLowerCase();
     const user = await this.userRepository.findOne({
-      where: { email },
-      relations: { profile: true }, // Required to access phone number for Zalo
+      where: { email: normalizedEmail },
+      select: { id: true, email: true },
+      relations: { profile: true },
     });
     if (!user) return; // Silent return to prevent email enumeration attacks
 
@@ -391,63 +427,92 @@ export class AuthService {
     }
   }
 
+  // async resetPassword(dto: ResetPasswordDto): Promise<void> {
+  //   const logger = new Logger('Debug-Reset'); // Temporary logger
+  //   logger.log(`1. Reset password requested for: ${dto.email}`);
+
+  //   try {
+  //     // Step 1: Find User
+  //     const user = await this.userRepository.findOneBy({ email: dto.email });
+  //     if (!user) {
+  //       logger.warn(`2. FAILED: User not found for email ${dto.email}`);
+  //       throw new BadRequestException('Invalid request');
+  //     }
+  //     logger.log(`2. User found: ${user.id}`);
+
+  //     // Step 2: Check Redis OTP
+  //     const storedOtp = await this.cacheService.get<string>(
+  //       `reset_otp:${user.id}`,
+  //     );
+  //     logger.log(`3. Redis OTP: ${storedOtp} | Provided OTP: ${dto.otp}`);
+
+  //     // Force both to be strings and trim whitespace before comparing
+  //     if (!storedOtp || String(storedOtp).trim() !== String(dto.otp).trim()) {
+  //       logger.warn('3. FAILED: OTP mismatch or expired');
+  //       throw new BadRequestException(MESSAGES.ERROR.AUTH.INVALID_OTP);
+  //     }
+
+  //     // Step 3: Bcrypt Hashing
+  //     if (!dto.newPassword) {
+  //       logger.error(
+  //         '4. FAILED: dto.newPassword is undefined! Check your frontend payload.',
+  //       );
+  //     }
+  //     user.passwordHash = await bcrypt.hash(dto.newPassword, 10);
+  //     logger.log('4. Password hashed successfully');
+
+  //     // Step 4: Save & Cleanup
+  //     await this.userRepository.save(user);
+  //     logger.log('5. User saved to database');
+
+  //     await this.cacheService.del(`reset_otp:${user.id}`);
+
+  //     // Step 5: Revoke Sessions
+  //     await this.adminRevokeAllUserSessions(user.id);
+  //     logger.log(`6. Password reset fully successful for user ${user.id}`);
+  //   } catch (error) {
+  //     logger.error('❌ CRASH DETECTED:', (error as Error)?.message);
+  //     throw error; // Re-throw so the frontend still gets the error response
+  //   }
+  // }
   async resetPassword(dto: ResetPasswordDto): Promise<void> {
-    const logger = new Logger('Debug-Reset'); // Temporary logger
-    logger.log(`1. Reset password requested for: ${dto.email}`);
+    const normalizedEmail = dto.email.trim().toLowerCase();
+    const user = await this.userRepository.findOne({
+      where: { email: normalizedEmail },
+      select: { id: true, email: true },
+    });
+    if (!user) throw new BadRequestException('Yêu cầu không hợp lệ.');
 
-    try {
-      // Step 1: Find User
-      const user = await this.userRepository.findOneBy({ email: dto.email });
-      if (!user) {
-        logger.warn(`2. FAILED: User not found for email ${dto.email}`);
-        throw new BadRequestException('Invalid request');
-      }
-      logger.log(`2. User found: ${user.id}`);
-
-      // Step 2: Check Redis OTP
-      const storedOtp = await this.cacheService.get<string>(
-        `reset_otp:${user.id}`,
-      );
-      logger.log(`3. Redis OTP: ${storedOtp} | Provided OTP: ${dto.otp}`);
-
-      // Force both to be strings and trim whitespace before comparing
-      if (!storedOtp || String(storedOtp).trim() !== String(dto.otp).trim()) {
-        logger.warn('3. FAILED: OTP mismatch or expired');
-        throw new BadRequestException(MESSAGES.ERROR.AUTH.INVALID_OTP);
-      }
-
-      // Step 3: Bcrypt Hashing
-      if (!dto.newPassword) {
-        logger.error(
-          '4. FAILED: dto.newPassword is undefined! Check your frontend payload.',
-        );
-      }
-      user.passwordHash = await bcrypt.hash(dto.newPassword, 10);
-      logger.log('4. Password hashed successfully');
-
-      // Step 4: Save & Cleanup
-      await this.userRepository.save(user);
-      logger.log('5. User saved to database');
-
-      await this.cacheService.del(`reset_otp:${user.id}`);
-
-      // Step 5: Revoke Sessions
-      await this.adminRevokeAllUserSessions(user.id);
-      logger.log(`6. Password reset fully successful for user ${user.id}`);
-    } catch (error) {
-      logger.error('❌ CRASH DETECTED:', (error as Error)?.message);
-      throw error; // Re-throw so the frontend still gets the error response
+    const storedOtp = await this.cacheService.get<string>(
+      `reset_otp:${user.id}`,
+    );
+    if (!storedOtp || String(storedOtp).trim() !== String(dto.otp).trim()) {
+      throw new BadRequestException(MESSAGES.ERROR.AUTH.INVALID_OTP);
     }
+
+    const passwordHash = await bcrypt.hash(dto.newPassword, 10);
+    await this.userRepository.update(user.id, { passwordHash });
+
+    await this.cacheService.del(`reset_otp:${user.id}`);
+    await this.cacheService.del(`auth:snapshot:${user.id}`);
+    await this.cacheService.del(`user:me:${user.id}`);
+    await this.adminRevokeAllUserSessions(user.id);
   }
 
   async changePassword(
     userId: string,
     dto: ChangePasswordDto,
   ): Promise<{ isFirstTimeSetup: boolean }> {
-    const user = await this.userRepository.findOne({
-      where: { id: userId },
-      select: { id: true, passwordHash: true, email: true },
-    });
+    // const user = await this.userRepository.findOne({
+    //   where: { id: userId },
+    //   select: { id: true, passwordHash: true, email: true },
+    // });
+    const user = await this.userRepository
+      .createQueryBuilder('user')
+      .addSelect('user.passwordHash')
+      .where('user.id = :userId', { userId })
+      .select(['user.id', 'user.passwordHash'])
+      .getOne();
 
     if (!user)
       throw new NotFoundException(
@@ -472,24 +537,29 @@ export class AuthService {
     // TRƯỜNG HỢP 2: Tài khoản Google tạo lần đầu (passwordHash is null/empty)
     // -> Cho phép trực tiếp thiết lập password mới (Setup Password)
     const isFirstTimeSetup = !user.passwordHash;
-    user.passwordHash = await bcrypt.hash(dto.newPassword, 10);
-    await this.userRepository.save(user);
+    const passwordHash = await bcrypt.hash(dto.newPassword, 10);
+    await this.userRepository.update(userId, { passwordHash });
 
-    // Xóa cache user để đồng bộ trạng thái
-    await this.cacheService.del(`user:${userId}`);
+    // Dọn sạch Cache liên quan
+    await this.cacheService.del(`auth:snapshot:${userId}`);
+    await this.cacheService.del(`user:me:${userId}`);
+
     return { isFirstTimeSetup };
   }
 
   // =====================================
-  // OTP & VERIFICATION
+  // 4. VERIFICATION & ACTIVATION
   // =====================================
 
-  private readonly logger = new Logger('Auth-OTP');
   async sendVerifyOTP(
     userId: string,
     channel: 'email' | 'zalo',
   ): Promise<void> {
-    const user = await this.userRepository.findOneBy({ id: userId });
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: { id: true, email: true },
+      relations: { profile: true },
+    });
     if (!user)
       throw new NotFoundException(
         MESSAGES.ERROR.NOT_FOUND(RESOURCES.USER.BASE),
@@ -563,37 +633,85 @@ export class AuthService {
 
     await this.userRepository.update(userId, { status: UserStatus.ACTIVE });
     await this.cacheService.del(`verify_otp:${userId}`);
+    await this.cacheService.del(`auth:snapshot:${userId}`);
+    await this.cacheService.del(`user:me:${userId}`);
+    // await this.cacheService.delPattern('users:list:*');
   }
 
+  // async verifyEmailToken(userId: string, token: string, deviceInfo: string) {
+  //   // 1. Fetch the saved token from Redis/Cache
+  //   const cachedToken = await this.cacheService.get<string>(
+  //     `verify_token:${userId}`,
+  //   );
+
+  //   // 2. Validate token existence and match
+  //   if (!cachedToken || cachedToken !== token) {
+  //     throw new BadRequestException(
+  //       'Mã xác thực không hợp lệ hoặc đã hết hạn.',
+  //     );
+  //   }
+
+  //   // 3. Fetch the user (INCLUDE relations needed for token generation)
+  //   const user = await this.userRepository.findOne({
+  //     where: { id: userId },
+  //     select: { id: true, email: true, status: true, fullName: true },
+  //     relations: { role: true },
+  //   });
+  //   if (!user) {
+  //     throw new NotFoundException(
+  //       MESSAGES.ERROR.NOT_FOUND(RESOURCES.USER.BASE),
+  //     );
+  //   }
+
+  //   // 4. Idempotency Check: If already active, still auto-login since they have a valid token
+  //   if (user.status === UserStatus.ACTIVE) {
+  //     const session = await this.generateTokensAndSession(user, deviceInfo);
+  //     await this.cacheService.del(`verify_token:${userId}`); // Cleanup just in case
+
+  //     return {
+  //       alreadyActive: true,
+  //       message: 'Tài khoản này đã được kích hoạt trước đó.',
+  //       ...session,
+  //     };
+  //   }
+
+  //   // 5. Activate the user account
+  //   user.status = UserStatus.ACTIVE;
+
+  //   // Optional: Audit trail stamp
+  //   user.updatedBy = user.id;
+  //   user.updatedByName = user.fullName;
+
+  //   await this.userRepository.save(user);
+
+  //   // 6. Delete the token from Cache so it cannot be reused
+  //   await this.cacheService.del(`verify_token:${userId}`);
+
+  //   this.logger.log(`User ${user.id} successfully verified their email.`);
+
+  //   // 7. Generate Auto-Login Session
+  //   const session = await this.generateTokensAndSession(user, deviceInfo);
+
+  //   return {
+  //     alreadyActive: false,
+  //     message: 'Xác thực tài khoản thành công. Đang tự động đăng nhập...',
+  //     ...session,
+  //   };
+  // }
   async verifyEmailToken(userId: string, token: string, deviceInfo: string) {
-    // 1. Fetch the saved token from Redis/Cache
     const cachedToken = await this.cacheService.get<string>(
       `verify_token:${userId}`,
     );
 
-    // 2. Validate token existence and match
-    if (!cachedToken) {
+    if (!cachedToken || cachedToken !== token) {
       throw new BadRequestException(
-        'Đường dẫn xác thực đã hết hạn (quá 5 phút) hoặc không tồn tại.',
+        'Mã xác thực không hợp lệ hoặc đã hết hạn.',
       );
     }
 
-    if (cachedToken !== token) {
-      throw new BadRequestException(
-        'Mã xác thực không hợp lệ hoặc đã bị thay đổi.',
-      );
-    }
-
-    // 3. Fetch the user (INCLUDE relations needed for token generation)
     const user = await this.userRepository.findOne({
       where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        passwordHash: true, // Needed if your generator strictly checks it
-        status: true,
-        fullName: true,
-      },
+      select: { id: true, email: true, status: true, fullName: true },
       relations: { role: true },
     });
     if (!user) {
@@ -602,43 +720,31 @@ export class AuthService {
       );
     }
 
-    // 4. Idempotency Check: If already active, still auto-login since they have a valid token
-    if (user.status === UserStatus.ACTIVE) {
-      const session = await this.generateTokensAndSession(user, deviceInfo);
-      await this.cacheService.del(`verify_token:${userId}`); // Cleanup just in case
+    if (user.status !== UserStatus.ACTIVE) {
+      user.status = UserStatus.ACTIVE;
+      user.updatedBy = user.id;
+      user.updatedByName = user.fullName;
+      await this.userRepository.save(user);
 
-      return {
-        alreadyActive: true,
-        message: 'Tài khoản này đã được kích hoạt trước đó.',
-        ...session,
-      };
+      await this.cacheService.del(`auth:snapshot:${userId}`);
+      await this.cacheService.del(`user:me:${userId}`);
+      await this.cacheService.delPattern('users:list:*');
     }
 
-    // 5. Activate the user account
-    user.status = UserStatus.ACTIVE;
-
-    // Optional: Audit trail stamp
-    user.updatedBy = user.id;
-    user.updatedByName = user.fullName;
-
-    await this.userRepository.save(user);
-
-    // 6. Delete the token from Cache so it cannot be reused
     await this.cacheService.del(`verify_token:${userId}`);
-
-    this.logger.log(`User ${user.id} successfully verified their email.`);
-
-    // 7. Generate Auto-Login Session
     const session = await this.generateTokensAndSession(user, deviceInfo);
 
     return {
-      alreadyActive: false,
-      message: 'Xác thực tài khoản thành công. Đang tự động đăng nhập...',
+      message: 'Xác thực tài khoản thành công.',
       ...session,
     };
   }
+
   async resendVerificationEmailCooldown(userId: string) {
-    const user = await this.userRepository.findOneBy({ id: userId });
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      select: { id: true, status: true },
+    });
 
     if (!user) {
       throw new NotFoundException('Tài khoản không tồn tại.');
@@ -668,85 +774,182 @@ export class AuthService {
   // SESSION MANAGEMENT
   // =====================================
 
+  // async refreshToken(token: string) {
+  //   try {
+  //     // 1. Verify and strongly type the payload
+  //     const payload = (await this.jwtService.verifyAsync(token, {
+  //       secret: process.env.JWT_REFRESH_SECRET,
+  //     })) as unknown as JwtPayload;
+
+  //     // 2. Fetch from Redis (comes back as string if you saved it with JSON.stringify)
+  //     const sessionRaw = await this.cacheService.get<string>(
+  //       `session:${payload.sub}:${payload.sessionId}`,
+  //     );
+
+  //     if (!sessionRaw)
+  //       throw new UnauthorizedException(MESSAGES.ERROR.AUTH.SESSION_REVOKED);
+
+  //     // 3. Strongly parse the session data
+  //     const sessionExists = await this.cacheService.get<ActiveSession>(
+  //       `session:${payload.sub}:${payload.sessionId}`,
+  //     );
+
+  //     if (!sessionExists)
+  //       throw new UnauthorizedException(MESSAGES.ERROR.AUTH.SESSION_REVOKED);
+
+  //     // 4. Fetch the user WITH their role so the payload populates correctly
+  //     const user = await this.userRepository.findOne({
+  //       where: { id: payload.sub },
+  //       relations: { role: { permissions: true } },
+  //     });
+
+  //     if (!user)
+  //       throw new UnauthorizedException(
+  //         MESSAGES.ERROR.NOT_FOUND(RESOURCES.USER.BASE),
+  //       );
+
+  //     // 5. Safely extract boolean (ESLint error fixed!)
+  //     const isRemembered: boolean = Boolean(
+  //       payload.rememberMe ?? sessionExists.rememberMe ?? false,
+  //     );
+
+  //     return this.generateTokensAndSession(
+  //       user,
+  //       payload.deviceInfo,
+  //       payload.sessionId,
+  //       isRemembered,
+  //     );
+  //   } catch (_error) {
+  //     throw new UnauthorizedException(MESSAGES.ERROR.AUTH.INVALID_REFRESH);
+  //   }
+  // }
   async refreshToken(token: string) {
     try {
-      // 1. Verify and strongly type the payload
       const payload = (await this.jwtService.verifyAsync(token, {
         secret: process.env.JWT_REFRESH_SECRET,
       })) as unknown as JwtPayload;
 
-      // 2. Fetch from Redis (comes back as string if you saved it with JSON.stringify)
-      const sessionRaw = await this.cacheService.get<string>(
-        `session:${payload.sub}:${payload.sessionId}`,
-      );
+      const sessionKey = `session:${payload.sub}:${payload.sessionId}`;
+      const session = await this.cacheService.get<ActiveSession>(sessionKey);
 
-      if (!sessionRaw)
+      if (!session) {
         throw new UnauthorizedException(MESSAGES.ERROR.AUTH.SESSION_REVOKED);
+      }
 
-      // 3. Strongly parse the session data
-      const sessionExists = await this.cacheService.get<ActiveSession>(
-        `session:${payload.sub}:${payload.sessionId}`,
-      );
-
-      if (!sessionExists)
-        throw new UnauthorizedException(MESSAGES.ERROR.AUTH.SESSION_REVOKED);
-
-      // 4. Fetch the user WITH their role so the payload populates correctly
       const user = await this.userRepository.findOne({
         where: { id: payload.sub },
-        relations: { role: { permissions: true } },
+        select: { id: true, email: true, fullName: true, status: true },
+        relations: { role: true },
       });
 
-      if (!user)
-        throw new UnauthorizedException(
-          MESSAGES.ERROR.NOT_FOUND(RESOURCES.USER.BASE),
-        );
-
-      // 5. Safely extract boolean (ESLint error fixed!)
-      const isRemembered: boolean = Boolean(
-        payload.rememberMe ?? sessionExists.rememberMe ?? false,
-      );
+      if (!user || user.status !== UserStatus.ACTIVE) {
+        throw new UnauthorizedException('Tài khoản không hợp lệ.');
+      }
 
       return this.generateTokensAndSession(
         user,
         payload.deviceInfo,
         payload.sessionId,
-        isRemembered,
+        Boolean(payload.rememberMe ?? session.rememberMe),
       );
-    } catch (_error) {
+    } catch {
       throw new UnauthorizedException(MESSAGES.ERROR.AUTH.INVALID_REFRESH);
     }
   }
-
+  /**
+   * Truy vấn danh sách session qua Set Index (Tránh lệnh KEYS gây nghẽn Redis)
+   */
+  // async getActiveSessions(userId: string): Promise<ActiveSession[]> {
+  //   const keys = await this.cacheService.keys(`session:${userId}:*`);
+  //   const sessions = await Promise.all(
+  //     keys.map((key) => this.cacheService.get<ActiveSession>(key)),
+  //   );
+  //   return sessions.filter((s): s is ActiveSession => s !== null);
+  // }
   async getActiveSessions(userId: string): Promise<ActiveSession[]> {
-    const keys = await this.cacheService.keys(`session:${userId}:*`);
+    const sessionIds =
+      (await this.cacheService.get<string[]>(`user_sessions:${userId}`)) || [];
+
+    if (sessionIds.length === 0) return [];
+
     const sessions = await Promise.all(
-      keys.map((key) => this.cacheService.get<ActiveSession>(key)),
+      sessionIds.map((sid) =>
+        this.cacheService.get<ActiveSession>(`session:${userId}:${sid}`),
+      ),
     );
-    return sessions.filter((s): s is ActiveSession => s !== null);
+
+    // Lọc bỏ session đã tự hết hạn TTL và đồng bộ lại danh sách
+    const validSessions = sessions.filter(
+      (s): s is ActiveSession => s !== null,
+    );
+    if (validSessions.length !== sessionIds.length) {
+      await this.cacheService.set(
+        `user_sessions:${userId}`,
+        validSessions.map((s) => s.sessionId),
+        7 * 24 * 3600,
+      );
+    }
+
+    return validSessions;
   }
+
+  // async revokeDeviceSession(userId: string, sessionId: string): Promise<void> {
+  //   await this.cacheService.del(`session:${userId}:${sessionId}`);
+  // }
+
+  // async revokeOtherSessions(
+  //   userId: string,
+  //   currentSessionId: string,
+  // ): Promise<void> {
+  //   const keys = await this.cacheService.keys(`session:${userId}:*`);
+  //   const keysToDelete = keys.filter(
+  //     (key) => !key.endsWith(`:${currentSessionId}`),
+  //   );
+
+  //   if (keysToDelete.length > 0) {
+  //     await Promise.all(keysToDelete.map((key) => this.cacheService.del(key)));
+  //   }
+  // }
+
+  // =====================================
+  // ADMIN / HR FUNCTIONS
+  // =====================================
 
   async revokeDeviceSession(userId: string, sessionId: string): Promise<void> {
     await this.cacheService.del(`session:${userId}:${sessionId}`);
+
+    // Xóa sessionId khỏi danh sách active sessions
+    const sessionIds =
+      (await this.cacheService.get<string[]>(`user_sessions:${userId}`)) || [];
+    const updatedIds = sessionIds.filter((id) => id !== sessionId);
+    await this.cacheService.set(
+      `user_sessions:${userId}`,
+      updatedIds,
+      7 * 24 * 3600,
+    );
   }
 
   async revokeOtherSessions(
     userId: string,
     currentSessionId: string,
   ): Promise<void> {
-    const keys = await this.cacheService.keys(`session:${userId}:*`);
-    const keysToDelete = keys.filter(
-      (key) => !key.endsWith(`:${currentSessionId}`),
-    );
+    const sessionIds =
+      (await this.cacheService.get<string[]>(`user_sessions:${userId}`)) || [];
+    const idsToDelete = sessionIds.filter((id) => id !== currentSessionId);
 
-    if (keysToDelete.length > 0) {
-      await Promise.all(keysToDelete.map((key) => this.cacheService.del(key)));
+    if (idsToDelete.length > 0) {
+      await Promise.all(
+        idsToDelete.map((id) =>
+          this.cacheService.del(`session:${userId}:${id}`),
+        ),
+      );
+      await this.cacheService.set(
+        `user_sessions:${userId}`,
+        [currentSessionId],
+        7 * 24 * 3600,
+      );
     }
   }
-
-  // =====================================
-  // ADMIN / HR FUNCTIONS
-  // =====================================
 
   async adminTriggerPasswordReset(userId: string): Promise<void> {
     const user = await this.userRepository.findOneBy({ id: userId });
@@ -757,8 +960,23 @@ export class AuthService {
     await this.forgotPassword(user.email, 'email');
   }
 
+  // async adminRevokeAllUserSessions(userId: string): Promise<void> {
+  //   await this.cacheService.delPattern(`session:${userId}:*`);
+  // }
   async adminRevokeAllUserSessions(userId: string): Promise<void> {
-    await this.cacheService.delPattern(`session:${userId}:*`);
+    const sessionIds =
+      (await this.cacheService.get<string[]>(`user_sessions:${userId}`)) || [];
+
+    if (sessionIds.length > 0) {
+      await Promise.all(
+        sessionIds.map((id) =>
+          this.cacheService.del(`session:${userId}:${id}`),
+        ),
+      );
+    }
+
+    await this.cacheService.del(`user_sessions:${userId}`);
+    await this.cacheService.del(`auth:snapshot:${userId}`);
   }
 
   @CacheClear({
@@ -774,34 +992,88 @@ export class AuthService {
   }
 
   // =====================================
-  // UTILITIES
+  // 6. UTILITIES & TOKEN GENERATION
   // =====================================
 
+  // private async generateTokensAndSession(
+  //   user: User,
+  //   deviceInfo: string,
+  //   existingSessionId?: string,
+  //   rememberMe: boolean = false,
+  // ) {
+  //   // Prefer crypto.randomUUID() over Math.random() for secure collision-free IDs
+  //   const sessionId = existingSessionId || crypto.randomUUID();
+
+  //   const payload = {
+  //     sub: user.id,
+  //     email: user.email,
+  //     role: user.role?.slug,
+  //     sessionId,
+  //     deviceInfo,
+  //     rememberMe,
+  //   };
+
+  //   // Access Token is always short-lived
+  //   const accessToken = await this.jwtService.signAsync(payload, {
+  //     expiresIn: (process.env.JWT_EXPIRES_IN ||
+  //       '15m') as JwtSignOptions['expiresIn'],
+  //   });
+
+  //   // Refresh Token adapts to the rememberMe choice
+  //   const refreshExpiresIn = rememberMe
+  //     ? process.env.JWT_REFRESH_EXPIRES_IN || '7d'
+  //     : '1d';
+
+  //   const refreshToken = await this.jwtService.signAsync(payload, {
+  //     secret: process.env.JWT_REFRESH_SECRET,
+  //     expiresIn: refreshExpiresIn as JwtSignOptions['expiresIn'],
+  //   });
+
+  //   // Dynamic Redis TTL matches the token lifespan
+  //   const ttlSeconds = rememberMe ? 7 * 24 * 60 * 60 : 1 * 24 * 60 * 60;
+
+  //   const sessionData: ActiveSession = {
+  //     sessionId,
+  //     deviceInfo,
+  //     rememberMe, // Save preference in Redis
+  //     lastAccessed: new Date().toISOString(),
+  //   };
+
+  //   await this.cacheService.set(
+  //     `session:${user.id}:${sessionId}`,
+  //     sessionData,
+  //     ttlSeconds,
+  //   );
+
+  //   return {
+  //     accessToken,
+  //     refreshToken,
+  //     user: { id: user.id, email: user.email, fullName: user.fullName },
+  //   };
+  // }
   private async generateTokensAndSession(
     user: User,
     deviceInfo: string,
     existingSessionId?: string,
-    rememberMe: boolean = false,
+    rememberMe = false,
   ) {
-    // Prefer crypto.randomUUID() over Math.random() for secure collision-free IDs
     const sessionId = existingSessionId || crypto.randomUUID();
 
-    const payload = {
+    const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
+      fullName: user.fullName,
       role: user.role?.slug,
       sessionId,
       deviceInfo,
       rememberMe,
     };
 
-    // Access Token is always short-lived
     const accessToken = await this.jwtService.signAsync(payload, {
       expiresIn: (process.env.JWT_EXPIRES_IN ||
         '15m') as JwtSignOptions['expiresIn'],
     });
 
-    // Refresh Token adapts to the rememberMe choice
     const refreshExpiresIn = rememberMe
       ? process.env.JWT_REFRESH_EXPIRES_IN || '7d'
       : '1d';
@@ -811,26 +1083,43 @@ export class AuthService {
       expiresIn: refreshExpiresIn as JwtSignOptions['expiresIn'],
     });
 
-    // Dynamic Redis TTL matches the token lifespan
     const ttlSeconds = rememberMe ? 7 * 24 * 60 * 60 : 1 * 24 * 60 * 60;
 
     const sessionData: ActiveSession = {
       sessionId,
       deviceInfo,
-      rememberMe, // Save preference in Redis
+      rememberMe,
       lastAccessed: new Date().toISOString(),
     };
 
+    // 1. Lưu chi tiết session
     await this.cacheService.set(
       `session:${user.id}:${sessionId}`,
       sessionData,
       ttlSeconds,
     );
 
+    // 2. Đăng ký sessionId vào danh sách active sessions của người dùng
+    const activeSessions =
+      (await this.cacheService.get<string[]>(`user_sessions:${user.id}`)) || [];
+    if (!activeSessions.includes(sessionId)) {
+      activeSessions.push(sessionId);
+      await this.cacheService.set(
+        `user_sessions:${user.id}`,
+        activeSessions,
+        7 * 24 * 3600,
+      );
+    }
+
     return {
       accessToken,
       refreshToken,
-      user: { id: user.id, email: user.email, fullName: user.fullName },
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        role: user.role?.slug,
+      },
     };
   }
 }

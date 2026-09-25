@@ -1,16 +1,43 @@
-import { Entity, PrimaryGeneratedColumn, Column, Index } from 'typeorm';
-import { Gender } from '../enums/citizen-identity.enum';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  Index,
+  OneToOne,
+} from 'typeorm';
 import { AuditableEntity } from 'src/common/entities/auditable.entity';
+import { EmployeeProfile } from 'src/employee-profiles/entities/employee-profile.entity';
+import { Gender } from '../enums/citizen-identity.enum';
+
+export enum IdentityCardStatus {
+  DRAFT = 'DRAFT', // Mới nhập thủ công một số trường cơ bản
+  VERIFIED = 'VERIFIED', // Đã quét QR hoặc đối soát đầy đủ thông tin
+}
 
 @Entity('citizen_identity_cards')
+// Index kiểm tra thời hạn thẻ (Cảnh báo thẻ sắp hết hạn cho HR)
+@Index('idx_citizen_identity_expiry', ['dateOfExpiry'])
 export class CitizenIdentityCard extends AuditableEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  // The 12-digit national personal identification number
-  @Column({ type: 'varchar', length: 12, unique: true, name: 'cccd_number' })
-  @Index({ unique: true })
-  cccdNumber!: string;
+  // 1. Blind Index: Lưu giá trị băm HMAC-SHA256 để tìm kiếm O(1) và ngăn chặn trùng lặp tuyệt đối
+  @Index('idx_citizen_identity_cccd_hash', { unique: true })
+  @Column({
+    type: 'varchar',
+    length: 64,
+    unique: true,
+    name: 'cccd_number_hash',
+  })
+  cccdNumberHash!: string;
+
+  // 2. Dữ liệu số CCCD đã mã hóa AES-256-GCM (iv:authTag:ciphertext)
+  @Column({ type: 'text', name: 'cccd_number_encrypted' })
+  cccdNumberEncrypted!: string;
+
+  // 3. 4 số cuối của CCCD phục vụ hiển thị an toàn trên giao diện mà không cần giải mã (Masked view)
+  @Column({ type: 'varchar', length: 4, name: 'cccd_last_four' })
+  cccdLastFour!: string;
 
   @Column({ type: 'varchar', length: 255, name: 'full_name' })
   fullName!: string;
@@ -35,15 +62,17 @@ export class CitizenIdentityCard extends AuditableEntity {
   @Column({ type: 'varchar', length: 100, name: 'religion', nullable: true })
   religion?: string;
 
-  // Quê quán / Nơi sinh gốc
-  @Column({ type: 'varchar', length: 500, name: 'place_of_origin' })
-  placeOfOrigin!: string;
+  @Column({
+    type: 'varchar',
+    length: 500,
+    name: 'place_of_origin',
+    nullable: true,
+  })
+  placeOfOrigin?: string;
 
-  // Nơi thường trú
   @Column({ type: 'varchar', length: 500, name: 'place_of_residence' })
   placeOfResidence!: string;
 
-  // Nơi tạm trú (Optional context)
   @Column({
     type: 'varchar',
     length: 500,
@@ -52,21 +81,43 @@ export class CitizenIdentityCard extends AuditableEntity {
   })
   temporaryAddress?: string;
 
-  // Features / Personal identification marks (Đặc điểm nhân dạng)
-  @Column({ type: 'text', name: 'personal_identification', nullable: true })
-  personalIdentification?: string;
+  // Đặc điểm nhân dạng - Mã hóa AES-256-GCM bảo vệ sinh trắc học
+  @Column({
+    type: 'text',
+    name: 'personal_identification_encrypted',
+    nullable: true,
+  })
+  personalIdentificationEncrypted?: string | null;
 
-  @Column({ type: 'date', name: 'date_of_issue' })
-  dateOfIssue!: Date;
+  @Column({ type: 'date', name: 'date_of_issue', nullable: true })
+  dateOfIssue?: Date;
 
-  @Column({ type: 'date', name: 'date_of_expiry' })
-  dateOfExpiry!: Date;
+  @Column({ type: 'date', name: 'date_of_expiry', nullable: true })
+  dateOfExpiry?: Date;
 
-  // Place of issue (e.g., Cục Cảnh sát Quản lý Hành chính về Trật tự Xã hội)
-  @Column({ type: 'varchar', length: 255, name: 'place_of_issue' })
-  placeOfIssue!: string;
+  @Column({
+    type: 'varchar',
+    length: 255,
+    name: 'place_of_issue',
+    nullable: true,
+  })
+  placeOfIssue?: string;
 
-  // Stores raw payload extracted from QR code/chip scans if needed
-  @Column({ type: 'jsonb', name: 'raw_qr_data', nullable: true })
-  rawQrData?: Record<string, any>;
+  // Chuỗi QR thô được mã hóa bảo mật
+  @Column({ type: 'text', name: 'raw_qr_data_encrypted', nullable: true })
+  rawQrDataEncrypted?: string | null;
+
+  @Column({
+    type: 'enum',
+    enum: IdentityCardStatus,
+    default: IdentityCardStatus.DRAFT,
+    name: 'status',
+  })
+  status!: IdentityCardStatus;
+
+  // Quan hệ 1-1 ngược về EmployeeProfile
+  @OneToOne(() => EmployeeProfile, (profile) => profile.identityCard, {
+    onDelete: 'CASCADE',
+  })
+  profile?: EmployeeProfile;
 }

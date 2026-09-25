@@ -381,4 +381,46 @@ export class S3StorageService {
       // Không ném lỗi ra ngoài để tránh làm crash quy trình lưu kết quả screening
     }
   }
+
+  /**
+   * Upload Buffer dưới dạng Stream không chặn Event Loop (Dùng chung cho Avatar, Documents, v.v.)
+   */
+  async uploadStream(
+    fileBuffer: Buffer,
+    fileKey: string,
+    mimeType: string,
+  ): Promise<{ fileKey: string; fileUrl: string; bucket: string }> {
+    try {
+      const stream = Readable.from(fileBuffer);
+
+      const parallelUpload = new Upload({
+        client: this.s3Client,
+        params: {
+          Bucket: this.bucketName,
+          Key: fileKey,
+          Body: stream,
+          ContentType: mimeType,
+        },
+        queueSize: 4,
+        partSize: 5 * 1024 * 1024, // 5MB chunks
+        leavePartsOnError: false,
+      });
+
+      await parallelUpload.done();
+
+      return {
+        fileKey,
+        fileUrl: this.getFileUrl(fileKey),
+        bucket: this.bucketName,
+      };
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `[S3 Upload Error] Thất bại khi upload file ${fileKey}: ${errMsg}`,
+      );
+      throw new InternalServerErrorException(
+        'Không thể tải tệp lên hệ thống lưu trữ S3.',
+      );
+    }
+  }
 }

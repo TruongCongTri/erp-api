@@ -7,14 +7,18 @@ import { User } from 'src/users/entities/users.entity';
 
 import { RecruitmentRequestController } from './recruitment-request.controller';
 import { RecruitmentRequestService } from './recruitment-request.service';
+import { CacheModule } from 'src/common/cache/cache.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([RecruitmentRequest, Department, User])],
+  imports: [
+    TypeOrmModule.forFeature([RecruitmentRequest, Department, User]),
+    CacheModule, // Cung cấp CacheService cho cơ chế Hot-Read & Invalidation
+  ],
   controllers: [RecruitmentRequestController],
   providers: [RecruitmentRequestService],
   exports: [
     RecruitmentRequestService,
-    TypeOrmModule, // Export để JobPostsModule hoặc các module con khác truy cập Repository
+    TypeOrmModule, // Cho phép JobPostsModule tái sử dụng Repository mà không tạo connection mới
   ],
 })
 export class RecruitmentRequestModule {}

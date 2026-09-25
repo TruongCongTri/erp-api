@@ -6,7 +6,7 @@ import {
   JoinColumn,
   OneToMany,
   Index,
-  VirtualColumn,
+  // VirtualColumn,
 } from 'typeorm';
 import { AuditableEntity } from 'src/common/entities/auditable.entity';
 import {
@@ -23,7 +23,17 @@ import { RecruitmentRequest } from './recruitment-request.entity';
 import { JobApplication } from './job-application.entity';
 
 @Entity('job_posts')
-@Index('idx_job_posts_status', ['status'])
+// ── 1. Tối ưu Composite Index phục vụ Career Portal & Quản trị HR (Tránh Seq Scan) ──
+@Index('idx_job_posts_status_published', ['status', 'publishedAt'])
+@Index('idx_job_posts_status_created', ['status', 'createdAt'])
+@Index('idx_job_posts_scheduled_worker', ['status', 'scheduledPublishAt'])
+@Index('idx_job_posts_filter_lookup', [
+  'status',
+  'specialization',
+  'workingModel',
+])
+@Index('idx_job_posts_deadline_lookup', ['status', 'applicationDeadline'])
+@Index('idx_job_posts_is_template', ['isTemplate'])
 export class JobPost extends AuditableEntity {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
@@ -49,7 +59,7 @@ export class JobPost extends AuditableEntity {
   })
   status!: JobPostStatus;
 
-  // ─── 1. Thông tin chung (General Information) ───
+  // ─── 1. Thông tin chung (Lean List Metadata) ───
 
   @Column({ name: 'public_title', type: 'varchar', length: 255 })
   publicTitle!: string;
@@ -88,18 +98,23 @@ export class JobPost extends AuditableEntity {
   @Column({ name: 'is_salary_negotiable', type: 'boolean', default: true })
   isSalaryNegotiable!: boolean;
 
-  // ─── 2. Mô tả công việc (Job Description) ───
+  // ─── 2. Mô tả công việc (Heavy Text Columns -> select: false để tối ưu Payload) ───
 
-  @Column({ name: 'job_description', type: 'text' })
+  @Column({ name: 'job_description', type: 'text', select: false })
   jobDescription!: string;
 
-  @Column({ type: 'text' })
+  @Column({ type: 'text', select: false })
   requirements!: string;
 
-  @Column({ type: 'text' })
+  @Column({ type: 'text', select: false })
   benefits!: string;
 
-  @Column({ name: 'extra_benefits', type: 'text', nullable: true })
+  @Column({
+    name: 'extra_benefits',
+    type: 'text',
+    nullable: true,
+    select: false,
+  })
   extraBenefits?: string | null;
 
   @Column({ name: 'work_locations', type: 'jsonb' })
@@ -203,6 +218,8 @@ export class JobPost extends AuditableEntity {
 
   // ─── Relational Links ───
 
+  // Bổ sung Index cho FK quan hệ 1-1 với RecruitmentRequest
+  @Index('idx_job_posts_recruitment_request_id')
   @Column({ name: 'recruitment_request_id', type: 'uuid', nullable: true })
   recruitmentRequestId?: string | null;
 
@@ -215,9 +232,9 @@ export class JobPost extends AuditableEntity {
   @OneToMany(() => JobApplication, (application) => application.jobPost)
   applications?: JobApplication[];
 
-  @VirtualColumn({
-    query: (alias) =>
-      `SELECT COUNT(id) FROM job_applications WHERE job_post_id = ${alias}.id`,
-  })
-  applicationsCount?: number;
+  // @VirtualColumn({
+  //   query: (alias) =>
+  //     `SELECT COUNT(id) FROM job_applications WHERE job_post_id = ${alias}.id`,
+  // })
+  // applicationsCount?: number;
 }

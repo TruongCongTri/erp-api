@@ -4,8 +4,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { UsersController } from './users.controller';
 import { User } from './entities/users.entity';
 import { UsersService } from './users.service';
-import { Role } from '../roles/entities/role.entity';
-import { Permission } from '../permissions/entities/permission.entity';
+import { Role } from 'src/roles/entities/role.entity';
+import { Permission } from 'src/permissions/entities/permission.entity';
 import { EmployeeProfile } from 'src/employee-profiles/entities/employee-profile.entity';
 import { Department } from 'src/departments/entities/department.entity';
 

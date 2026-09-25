@@ -9,7 +9,11 @@ import {
   UseGuards,
   UseInterceptors,
   ParseUUIDPipe,
+  HttpCode,
+  HttpStatus,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { RecruitmentRequestService } from './recruitment-request.service';
 import {
   CreateRecruitmentRequestDto,
@@ -32,7 +36,11 @@ import { AuditActionType } from 'src/audit-log/audit-log.types';
 export class RecruitmentRequestController {
   constructor(private readonly requisitionService: RecruitmentRequestService) {}
 
+  // ==========================================
+  // 1. TẠO MỚI YÊU CẦU TUYỂN DỤNG
+  // ==========================================
   @Post()
+  @HttpCode(HttpStatus.CREATED)
   @RequireAnyPermissions(
     'ats_requisition:create:any',
     'ats_requisition:create:dept',
@@ -55,6 +63,9 @@ export class RecruitmentRequestController {
     };
   }
 
+  // ==========================================
+  // 2. TRUY VẤN DANH SÁCH (TỐI ƯU DISK I/O & LEAN PAYLOAD)
+  // ==========================================
   @Get()
   @RequireAnyPermissions(
     'ats_requisition:read:any',
@@ -64,7 +75,16 @@ export class RecruitmentRequestController {
     @Query() query: QueryRecruitmentRequestDto,
     @CurrentUser() user: ActiveUserData,
   ) {
-    const result = await this.requisitionService.findAll(query, user);
+    // Tiêu chí 1: Khống chế limit tối đa 100 để bảo vệ Disk I/O và RAM của DB
+    const boundedQuery: QueryRecruitmentRequestDto = {
+      ...query,
+      page: Math.max(1, Number(query.page) || 1),
+      limit: Math.min(Math.max(1, Number(query.limit) || 20), 100),
+    };
+
+    const result = await this.requisitionService.findAll(boundedQuery, user);
+
+    // Tiêu chí 3: Payload trả về dạng rút gọn (Lean), lược bỏ raw text nặng
     return {
       success: true,
       data: result.data,
@@ -73,16 +93,28 @@ export class RecruitmentRequestController {
     };
   }
 
+  // ==========================================
+  // 3. CHI TIẾT YÊU CẦU (HTTP CACHE + REDIS HOT-CACHE)
+  // ==========================================
   @Get(':id')
+  @HttpCode(HttpStatus.OK)
   @RequireAnyPermissions(
     'ats_requisition:read:any',
     'ats_requisition:read:dept',
   )
   async findOne(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: ActiveUserData,
+    @Res({ passthrough: true }) res: Response,
   ) {
     const data = await this.requisitionService.findOne(id, user);
+
+    // Tiêu chí 4: Header HTTP Caching cho client/gateway (Cache riêng tư 60s)
+    res.setHeader(
+      'Cache-Control',
+      'private, max-age=60, stale-while-revalidate=30',
+    );
+
     return {
       success: true,
       data,
@@ -90,7 +122,11 @@ export class RecruitmentRequestController {
     };
   }
 
+  // ==========================================
+  // 4. CẬP NHẬT NỘI DUNG (INVALIDATES CACHE TỰ ĐỘNG)
+  // ==========================================
   @Patch(':id')
+  @HttpCode(HttpStatus.OK)
   @RequireAnyPermissions(
     'ats_requisition:update:any',
     'ats_requisition:update:dept',
@@ -103,7 +139,7 @@ export class RecruitmentRequestController {
     targetEntityIdParam: 'id',
   })
   async update(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateRecruitmentRequestDto,
     @CurrentUser() user: ActiveUserData,
   ) {
@@ -115,7 +151,11 @@ export class RecruitmentRequestController {
     };
   }
 
+  // ==========================================
+  // 5. PHÊ DUYỆT / TỪ CHỐI
+  // ==========================================
   @Patch(':id/review')
+  @HttpCode(HttpStatus.OK)
   @RequireAnyPermissions(
     'ats_requisition:approve:any',
     'ats_requisition:approve:dept',
@@ -129,7 +169,7 @@ export class RecruitmentRequestController {
     targetEntityIdParam: 'id',
   })
   async review(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: ReviewRecruitmentRequestDto,
     @CurrentUser() user: ActiveUserData,
   ) {
@@ -141,7 +181,11 @@ export class RecruitmentRequestController {
     };
   }
 
+  // ==========================================
+  // 6. HỦY BỎ YÊU CẦU
+  // ==========================================
   @Patch(':id/cancel')
+  @HttpCode(HttpStatus.OK)
   @RequireAnyPermissions(
     'ats_requisition:update:any',
     'ats_requisition:update:dept',
@@ -156,7 +200,7 @@ export class RecruitmentRequestController {
     targetEntityIdParam: 'id',
   })
   async cancel(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: ActiveUserData,
   ) {
     const data = await this.requisitionService.cancel(id, user);

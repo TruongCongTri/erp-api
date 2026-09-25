@@ -34,6 +34,10 @@ import {
   MAX_CV_FILE_SIZE_MB,
 } from 'src/config/multer-cv.config';
 import { S3StorageService } from './s3-storage.service';
+import {
+  PublicJobSubmissionDto,
+  SpontaneousSubmissionDto,
+} from './dto/public-submission.dto';
 
 @Controller('ats/submissions')
 export class CandidateSubmissionsController {
@@ -46,21 +50,114 @@ export class CandidateSubmissionsController {
     private readonly cvUploadQueue: Queue<CvUploadJobData>,
   ) {}
 
+  // =========================================================================
+  // 1. PUBLIC CAREER WEBSITE - NỘP VÀO JOB CỤ THỂ (KỂ CẢ HẾT HẠN, CHẶN CLOSED)
+  // KHÔNG CẦN ĐĂNG NHẬP - HỖ TRỢ UPLOAD FILE TRỰC TIẾP
+  // =========================================================================
+  @Throttle({ default: { limit: 5, ttl: 60000 } }) // Giới hạn 5 lần/phút/IP chống spam bot
+  @Post('public')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(FileInterceptor('cvFile', cvMulterOptions))
+  async submitFromCompanyWebsite(
+    @Body() dto: PublicJobSubmissionDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    let cvStorageLocation: CvStorageLocation | undefined;
+
+    // 1. Upload stream trực tiếp lên S3 nếu ứng viên đính kèm file
+    if (file) {
+      const s3Result = await this.s3StorageService.uploadCvStream(
+        file.buffer,
+        file.originalname,
+        file.mimetype,
+      );
+      dto.cvFileKey = s3Result.fileKey;
+      dto.cvUrl = s3Result.fileUrl;
+      cvStorageLocation = s3Result.storageLocation;
+    } else if (dto.cvFileKey && (!dto.cvUrl || dto.cvUrl.trim() === '')) {
+      dto.cvUrl = this.s3StorageService.getFileUrl(dto.cvFileKey);
+    } else if (!dto.cvUrl) {
+      throw new BadRequestException(
+        'Vui lòng đính kèm tệp CV (cvFile) hoặc cung cấp cvUrl.',
+      );
+    }
+
+    const result = await this.submissionsService.ingest({
+      ...dto,
+      platformSource: PlatformSource.COMPANY_WEBSITE,
+      cvStorageLocation,
+    });
+
+    return {
+      success: true,
+      data: result,
+      message: 'Hồ sơ ứng tuyển của bạn đã được gửi thành công!',
+    };
+  }
+
+  // =========================================================================
+  // 2. PUBLIC TALENT POOL - ỨNG TUYỂN TỰ DO (VỊ TRÍ KHÔNG CÓ TRONG DANH SÁCH)
+  // KHÔNG CẦN ĐĂNG NHẬP - LƯU VÀO TALENT POOL KÈM VỊ TRÍ MONG MUỐN
+  // =========================================================================
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('spontaneous')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(FileInterceptor('cvFile', cvMulterOptions))
+  async submitSpontaneous(
+    @Body() dto: SpontaneousSubmissionDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    let cvStorageLocation: CvStorageLocation | undefined;
+
+    if (file) {
+      const s3Result = await this.s3StorageService.uploadCvStream(
+        file.buffer,
+        file.originalname,
+        file.mimetype,
+      );
+      dto.cvFileKey = s3Result.fileKey;
+      dto.cvUrl = s3Result.fileUrl;
+      cvStorageLocation = s3Result.storageLocation;
+    } else if (dto.cvFileKey && (!dto.cvUrl || dto.cvUrl.trim() === '')) {
+      dto.cvUrl = this.s3StorageService.getFileUrl(dto.cvFileKey);
+    } else if (!dto.cvUrl) {
+      throw new BadRequestException(
+        'Vui lòng đính kèm tệp CV (cvFile) hoặc cung cấp cvUrl.',
+      );
+    }
+
+    const result = await this.submissionsService.ingestSpontaneous({
+      ...dto,
+      platformSource: PlatformSource.COMPANY_WEBSITE,
+      cvStorageLocation,
+    });
+
+    return {
+      success: true,
+      data: result,
+      message:
+        'Hồ sơ của bạn đã được thêm vào Cơ sở Dữ liệu Tài năng (Talent Pool) của công ty. Chúng tôi sẽ liên hệ khi có vị trí phù hợp!',
+    };
+  }
+
   // ==========================================
   // 1. PUBLIC CAREER PORTAL INGESTION
   // ==========================================
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // Chống spam nộp CV
   @Post('portal')
   async submitFromPortal(@Body() dto: PortalCandidateSubmissionDto) {
-    // 1. Tự nội suy URL nếu có fileKey
+    // 1. Tự lấy URL nếu có fileKey
     let finalCvUrl = dto.cvUrl;
     if (dto.cvFileKey && !finalCvUrl) {
       finalCvUrl = this.s3StorageService.getFileUrl(dto.cvFileKey);
     }
 
-    // 2. Tự nội suy fileKey từ URL nếu thiếu
+    // 2. Tự lấy fileKey từ URL nếu thiếu
     const finalFileKey =
-      dto.cvFileKey || (finalCvUrl ? finalCvUrl.split('/').pop() : undefined);
+      dto.cvFileKey ||
+      (finalCvUrl
+        ? (this.s3StorageService.extractFileKeyFromUrl(finalCvUrl) ?? undefined)
+        : undefined);
 
     if (!finalCvUrl && !finalFileKey) {
       throw new BadRequestException('Vui lòng cung cấp cvFileKey hoặc cvUrl.');
@@ -111,9 +208,9 @@ export class CandidateSubmissionsController {
     };
   }
 
-  // ==========================================
-  // 3. AUTHENTICATED HR MANUAL ENTRY (FB, ZALO)
-  // ==========================================
+  // =========================================================================
+  // 3. HR MANUAL ENTRY (DÀNH CHO NỘI BỘ HR - YÊU CẦU ĐĂNG NHẬP & PHÂN QUYỀN)
+  // =========================================================================
   @UseGuards(JwtAuthGuard, PermissionsGuard)
   @UseInterceptors(FileInterceptor('cvFile', cvMulterOptions), AuditInterceptor)
   @RequireAnyPermissions(
@@ -183,15 +280,26 @@ export class CandidateSubmissionsController {
       throw new BadRequestException('Vui lòng đính kèm tệp CV ứng tuyển.');
     }
 
+    // Tiêu chí 3: Tải trực tiếp lên S3 qua stream, loại bỏ việc đưa file Base64 10MB vào Redis
+    const s3Result = await this.s3StorageService.uploadCvStream(
+      file.buffer,
+      file.originalname,
+      file.mimetype,
+    );
+
     const trackingId = randomUUID();
 
-    // Đẩy việc upload và ingest vào hàng đợi ngầm
+    // Tiêu chí 3: Chỉ đưa metadata siêu nhẹ (< 1KB) vào hàng đợi BullMQ
     await this.cvUploadQueue.add(
       'process-cv',
       {
         trackingId,
-        dto,
-        fileBufferBase64: file.buffer.toString('base64'),
+        dto: {
+          ...dto,
+          cvFileKey: s3Result.fileKey,
+          cvUrl: s3Result.fileUrl,
+          cvStorageLocation: s3Result.storageLocation,
+        },
         fileName: file.originalname,
         mimeType: file.mimetype,
       },
