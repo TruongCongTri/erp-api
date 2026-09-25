@@ -249,7 +249,7 @@ async function runAtsSeed() {
       },
       createdBy: adminUser?.id,
       createdByName: adminUser?.fullName || 'Super Admin',
-      applicationsCount: 0,
+      // applicationsCount: 0,
     });
 
     jobEntity = await jobPostRepo.save(jobEntity);
@@ -316,7 +316,11 @@ async function runAtsSeed() {
         );
 
         // Increment in-memory (bulk saved after loop)
-        targetJob.applicationsCount = (targetJob.applicationsCount || 0) + 1;
+        (
+          targetJob as JobPost & { applicationsCount?: number }
+        ).applicationsCount =
+          ((targetJob as JobPost & { applicationsCount?: number })
+            .applicationsCount ?? 0) + 1;
 
         console.log(
           `  🎯 [${cData.fullName}] -> Applied to "${targetJob.publicTitle}" via [${appItem.platformSource}] | Score: ${appItem.aiScore}`,

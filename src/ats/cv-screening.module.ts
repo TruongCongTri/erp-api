@@ -20,6 +20,10 @@ import { CandidatesModule } from './candidates.module';
     TypeOrmModule.forFeature([JobPost, JobApplication, ApplicationSubmission]),
     BullModule.registerQueue({
       name: ATS_CV_SCREENING_QUEUE,
+      defaultJobOptions: {
+        removeOnComplete: 100, // Tự động xóa bớt job thành công để tiết kiệm RAM Redis
+        removeOnFail: 200, // Giữ lại 200 job lỗi gần nhất để debug
+      },
     }),
   ],
   providers: [

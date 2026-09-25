@@ -16,7 +16,19 @@ import { ApplicationSubmission } from './entities/application-submission.entity'
 import { ATS_CV_SCREENING_QUEUE } from './ats.constants';
 import { S3StorageService } from './s3-storage.service';
 
-@Processor(ATS_CV_SCREENING_QUEUE)
+@Processor(ATS_CV_SCREENING_QUEUE, {
+  // 1. Tăng khoảng cách kiểm tra stall từ 30s lên 5 phút (300.000ms)
+  stalledInterval: 300000,
+
+  // 2. Tăng thời gian nghỉ khi hàng đợi rỗng từ 5s lên 30s (giảm số lệnh BZPOPMIN)
+  drainDelay: 30,
+
+  // 3. Số lượng job xử lý đồng thời
+  concurrency: 2,
+
+  // 4. Giới hạn số lần thử lại stall
+  maxStalledCount: 1,
+})
 export class CvScreeningConsumer extends WorkerHost {
   private readonly logger = new Logger(CvScreeningConsumer.name);
 
